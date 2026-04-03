@@ -401,6 +401,34 @@ def main():
     )
     spark.sql("DROP TABLE data_evolution_type_promotion_updates")
 
+    # ===== Schema Evolution: Drop Column =====
+    # Old files have (id, name, score); after ALTER TABLE DROP COLUMN, table has (id, name).
+    # Reader should ignore the dropped column when reading old files.
+    spark.sql(
+        """
+        CREATE TABLE IF NOT EXISTS schema_evolution_drop_column (
+            id INT,
+            name STRING,
+            score INT
+        ) USING paimon
+        """
+    )
+    spark.sql(
+        """
+        INSERT INTO schema_evolution_drop_column VALUES
+            (1, 'alice', 100),
+            (2, 'bob', 200)
+        """
+    )
+    spark.sql("ALTER TABLE schema_evolution_drop_column DROP COLUMN score")
+    spark.sql(
+        """
+        INSERT INTO schema_evolution_drop_column VALUES
+            (3, 'carol'),
+            (4, 'dave')
+        """
+    )
+
 
 if __name__ == "__main__":
     main()

@@ -16,7 +16,7 @@
 // under the License.
 
 mod reader;
-pub mod schema_evolution;
+pub(crate) mod schema_evolution;
 
 pub use crate::arrow::reader::ArrowReaderBuilder;
 

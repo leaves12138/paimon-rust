@@ -1124,3 +1124,45 @@ async fn test_read_data_evolution_type_promotion() {
         "Data evolution + type promotion: INT should be cast to BIGINT, MERGE INTO updates value"
     );
 }
+
+/// Test reading a table after ALTER TABLE DROP COLUMN.
+/// Old data files have the dropped column; reader should ignore it.
+#[tokio::test]
+async fn test_read_schema_evolution_drop_column() {
+    let (_, batches) = scan_and_read_with_fs_catalog("schema_evolution_drop_column", None).await;
+
+    // Verify the dropped column 'score' is not present in the output.
+    for batch in &batches {
+        assert!(
+            batch.column_by_name("score").is_none(),
+            "Dropped column 'score' should not appear in output"
+        );
+    }
+
+    let mut rows: Vec<(i32, String)> = Vec::new();
+    for batch in &batches {
+        let id = batch
+            .column_by_name("id")
+            .and_then(|c| c.as_any().downcast_ref::<Int32Array>())
+            .expect("id");
+        let name = batch
+            .column_by_name("name")
+            .and_then(|c| c.as_any().downcast_ref::<StringArray>())
+            .expect("name");
+        for i in 0..batch.num_rows() {
+            rows.push((id.value(i), name.value(i).to_string()));
+        }
+    }
+    rows.sort_by_key(|(id, _)| *id);
+
+    assert_eq!(
+        rows,
+        vec![
+            (1, "alice".into()),
+            (2, "bob".into()),
+            (3, "carol".into()),
+            (4, "dave".into()),
+        ],
+        "Old rows should be readable after DROP COLUMN, with only remaining columns"
+    );
+}

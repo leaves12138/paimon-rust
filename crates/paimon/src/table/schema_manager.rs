@@ -22,6 +22,7 @@
 use crate::io::FileIO;
 use crate::spec::TableSchema;
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 const SCHEMA_DIR: &str = "schema";
 const SCHEMA_PREFIX: &str = "schema-";
@@ -33,13 +34,16 @@ const SCHEMA_PREFIX: &str = "schema-";
 /// is written with an incremented ID. Data files record which schema they were written with
 /// via `DataFileMeta.schema_id`.
 ///
+/// The schema cache is shared across clones via `Arc`, so multiple readers
+/// (e.g. parallel split streams) benefit from a single cache.
+///
 /// Reference: [org.apache.paimon.schema.SchemaManager](https://github.com/apache/paimon/blob/release-1.3/paimon-core/src/main/java/org/apache/paimon/schema/SchemaManager.java)
 #[derive(Debug, Clone)]
 pub struct SchemaManager {
     file_io: FileIO,
     table_path: String,
-    /// Cache of loaded schemas by ID.
-    cache: HashMap<i64, TableSchema>,
+    /// Shared cache of loaded schemas by ID.
+    cache: Arc<Mutex<HashMap<i64, Arc<TableSchema>>>>,
 }
 
 impl SchemaManager {
@@ -47,7 +51,7 @@ impl SchemaManager {
         Self {
             file_io,
             table_path,
-            cache: HashMap::new(),
+            cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -63,19 +67,37 @@ impl SchemaManager {
 
     /// Load a schema by ID. Returns cached version if available.
     ///
+    /// The cache is shared across all clones of this `SchemaManager`, so loading
+    /// a schema in one stream makes it available to all other streams reading
+    /// from the same table.
+    ///
     /// Reference: [SchemaManager.schema(long)](https://github.com/apache/paimon/blob/release-1.3/paimon-core/src/main/java/org/apache/paimon/schema/SchemaManager.java)
-    pub async fn schema(&mut self, schema_id: i64) -> crate::Result<&TableSchema> {
-        if !self.cache.contains_key(&schema_id) {
-            let path = self.schema_path(schema_id);
-            let input = self.file_io.new_input(&path)?;
-            let bytes = input.read().await?;
-            let schema: TableSchema =
-                serde_json::from_slice(&bytes).map_err(|e| crate::Error::DataInvalid {
-                    message: format!("Failed to parse schema file: {path}"),
-                    source: Some(Box::new(e)),
-                })?;
-            self.cache.insert(schema_id, schema);
+    pub async fn schema(&self, schema_id: i64) -> crate::Result<Arc<TableSchema>> {
+        // Fast path: check cache under a short lock.
+        {
+            let cache = self.cache.lock().unwrap();
+            if let Some(schema) = cache.get(&schema_id) {
+                return Ok(schema.clone());
+            }
         }
-        Ok(self.cache.get(&schema_id).unwrap())
+
+        // Cache miss — load from file (no lock held during I/O).
+        let path = self.schema_path(schema_id);
+        let input = self.file_io.new_input(&path)?;
+        let bytes = input.read().await?;
+        let schema: TableSchema =
+            serde_json::from_slice(&bytes).map_err(|e| crate::Error::DataInvalid {
+                message: format!("Failed to parse schema file: {path}"),
+                source: Some(Box::new(e)),
+            })?;
+        let schema = Arc::new(schema);
+
+        // Insert into shared cache (short lock).
+        {
+            let mut cache = self.cache.lock().unwrap();
+            cache.entry(schema_id).or_insert_with(|| schema.clone());
+        }
+
+        Ok(schema)
     }
 }
