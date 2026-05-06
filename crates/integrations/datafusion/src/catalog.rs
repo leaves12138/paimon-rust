@@ -49,8 +49,8 @@ pub struct PaimonCatalogProvider {
     catalog: Arc<dyn Catalog>,
     /// Session-scoped dynamic options shared with the SQL context.
     dynamic_options: DynamicOptions,
-    /// In-memory schemas for temporary tables, keyed by schema name.
-    temp_schemas: RwLock<HashMap<String, Arc<MemorySchemaProvider>>>,
+    /// In-memory databases for temporary tables, keyed by database name.
+    temp_databases: RwLock<HashMap<String, Arc<MemorySchemaProvider>>>,
 }
 
 impl Debug for PaimonCatalogProvider {
@@ -69,7 +69,7 @@ impl PaimonCatalogProvider {
         PaimonCatalogProvider {
             catalog,
             dynamic_options: Default::default(),
-            temp_schemas: RwLock::new(HashMap::new()),
+            temp_databases: RwLock::new(HashMap::new()),
         }
     }
 
@@ -80,7 +80,7 @@ impl PaimonCatalogProvider {
         PaimonCatalogProvider {
             catalog,
             dynamic_options,
-            temp_schemas: RwLock::new(HashMap::new()),
+            temp_databases: RwLock::new(HashMap::new()),
         }
     }
 }
@@ -107,9 +107,9 @@ impl CatalogProvider for PaimonCatalogProvider {
     }
 
     fn schema(&self, name: &str) -> Option<Arc<dyn SchemaProvider>> {
-        // First check temp_schemas
-        let schemas = self.temp_schemas.read().unwrap_or_else(|e| e.into_inner());
-        if let Some(schema) = schemas.get(name) {
+        // First check temp_databases
+        let databases = self.temp_databases.read().unwrap_or_else(|e| e.into_inner());
+        if let Some(schema) = databases.get(name) {
             return Some(Arc::clone(schema) as Arc<dyn SchemaProvider>);
         }
 
@@ -185,47 +185,47 @@ impl CatalogProvider for PaimonCatalogProvider {
 }
 
 impl PaimonCatalogProvider {
-    /// Creates or returns an existing temporary in-memory schema under this catalog.
-    fn get_or_create_temp_schema(&self, name: &str) -> Arc<MemorySchemaProvider> {
-        let mut schemas = self.temp_schemas.write().unwrap_or_else(|e| e.into_inner());
-        schemas
+    /// Creates or returns an existing temporary in-memory database under this catalog.
+    fn get_or_create_temp_database(&self, name: &str) -> Arc<MemorySchemaProvider> {
+        let mut databases = self.temp_databases.write().unwrap_or_else(|e| e.into_inner());
+        databases
             .entry(name.to_string())
             .or_insert_with(|| Arc::new(MemorySchemaProvider::new()))
             .clone()
     }
 
-    /// Registers a temporary table in the specified schema.
-    /// Creates the schema if it does not exist.
+    /// Registers a temporary table in the specified database.
+    /// Creates the database if it does not exist.
     pub fn register_temp_table(
         &self,
-        schema: &str,
+        database: &str,
         table_name: &str,
         schema_ref: SchemaRef,
         batches: Vec<RecordBatch>,
     ) -> DFResult<()> {
-        let mem_schema = self.get_or_create_temp_schema(schema);
+        let mem_database = self.get_or_create_temp_database(database);
         let mem_table = MemTable::try_new(schema_ref, vec![batches])?;
-        mem_schema
+        mem_database
             .register_table(table_name.to_string(), Arc::new(mem_table))?;
         Ok(())
     }
 
-    /// Deregisters a temporary table from the specified schema.
+    /// Deregisters a temporary table from the specified database.
     pub fn deregister_temp_table(
         &self,
-        schema: &str,
+        database: &str,
         table_name: &str,
     ) -> DFResult<Option<Arc<dyn TableProvider>>> {
-        let schemas = self.temp_schemas.read().unwrap_or_else(|e| e.into_inner());
-        let mem_schema = schemas
-            .get(schema)
-            .ok_or_else(|| plan_datafusion_err!("Unknown temp schema '{schema}'"))?;
-        mem_schema.deregister_table(table_name)
+        let databases = self.temp_databases.read().unwrap_or_else(|e| e.into_inner());
+        let mem_database = databases
+            .get(database)
+            .ok_or_else(|| plan_datafusion_err!("Unknown temp database '{database}'"))?;
+        mem_database.deregister_table(table_name)
     }
 
-    /// Returns whether a temp schema exists with the given name.
-    pub fn has_temp_schema(&self, name: &str) -> bool {
-        self.temp_schemas.read().unwrap_or_else(|e| e.into_inner()).contains_key(name)
+    /// Returns whether a temp database exists with the given name.
+    pub fn has_temp_database(&self, name: &str) -> bool {
+        self.temp_databases.read().unwrap_or_else(|e| e.into_inner()).contains_key(name)
     }
 }
 

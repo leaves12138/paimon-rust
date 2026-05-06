@@ -158,7 +158,7 @@ impl SQLContext {
         Ok(())
     }
 
-    /// Sets the current database (schema) for unqualified table references.
+    /// Sets the current database for unqualified table references.
     pub async fn set_current_database(&self, database_name: &str) -> DFResult<()> {
         if database_name.contains('\'') {
             return Err(DataFusionError::Plan(
@@ -182,18 +182,18 @@ impl SQLContext {
     ///
     /// The `name` parameter accepts flexible table references, similar to DataFusion:
     /// - `"my_table"` — uses the current catalog and current database
-    /// - `"schema.my_table"` — uses the current catalog with the specified schema
-    /// - `"catalog.schema.my_table"` — fully qualified
+    /// - `"database.my_table"` — uses the current catalog with the specified database
+    /// - `"catalog.database.my_table"` — fully qualified
     ///
     /// The table exists only for the lifetime of this SQLContext instance.
     ///
     /// # Example
     /// ```ignore
     /// // Fully qualified
-    /// ctx.register_temp_table("paimon.temp.users", schema, batches)?;
-    /// // Schema-qualified (uses current catalog)
-    /// ctx.register_temp_table("temp.users", schema, batches)?;
-    /// // Bare (uses current catalog + __temp schema)
+    /// ctx.register_temp_table("paimon.my_db.users", schema, batches)?;
+    /// // Database-qualified (uses current catalog)
+    /// ctx.register_temp_table("my_db.users", schema, batches)?;
+    /// // Bare (uses current catalog + current database)
     /// ctx.register_temp_table("quick_lookup", schema, batches)?;
     /// ```
     pub fn register_temp_table(
@@ -202,7 +202,7 @@ impl SQLContext {
         schema_ref: Arc<Schema>,
         batches: Vec<RecordBatch>,
     ) -> DFResult<()> {
-        let (catalog, schema, table_name) = self.resolve_temp_table_name(name.into())?;
+        let (catalog, database, table_name) = self.resolve_temp_table_name(name.into())?;
         let catalog_provider = self
             .ctx
             .catalog(&catalog)
@@ -217,7 +217,7 @@ impl SQLContext {
                 ))
             })?;
 
-        paimon_provider.register_temp_table(&schema, &table_name, schema_ref, batches)
+        paimon_provider.register_temp_table(&database, &table_name, schema_ref, batches)
     }
 
     /// Deregisters a temporary table.
@@ -227,7 +227,7 @@ impl SQLContext {
         &self,
         name: impl Into<TableReference>,
     ) -> DFResult<Option<Arc<dyn TableProvider>>> {
-        let (catalog, schema, table_name) = self.resolve_temp_table_name(name.into())?;
+        let (catalog, database, table_name) = self.resolve_temp_table_name(name.into())?;
         let catalog_provider = self
             .ctx
             .catalog(&catalog)
@@ -242,22 +242,22 @@ impl SQLContext {
                 ))
             })?;
 
-        paimon_provider.deregister_temp_table(&schema, &table_name)
+        paimon_provider.deregister_temp_table(&database, &table_name)
     }
 
-    /// Resolve a TableReference into (catalog, schema, table_name).
+    /// Resolve a TableReference into (catalog, database, table_name).
     fn resolve_temp_table_name(&self, name: TableReference) -> DFResult<(String, String, String)> {
         match name {
             TableReference::Bare { table } => {
                 let catalog = self.current_catalog_name();
-                let schema = self
+                let database = self
                     .ctx
                     .state()
                     .config_options()
                     .catalog
                     .default_schema
                     .clone();
-                Ok((catalog, schema, table.to_string()))
+                Ok((catalog, database, table.to_string()))
             }
             TableReference::Partial { schema, table } => {
                 let catalog = self.current_catalog_name();
