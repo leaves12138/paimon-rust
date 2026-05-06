@@ -21,11 +21,16 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::sync::Arc;
+use std::sync::RwLock;
 
 use async_trait::async_trait;
-use datafusion::catalog::{CatalogProvider, SchemaProvider};
+use datafusion::arrow::datatypes::SchemaRef;
+use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::catalog::{CatalogProvider, MemorySchemaProvider, SchemaProvider};
+use datafusion::datasource::MemTable;
 use datafusion::datasource::TableProvider;
 use datafusion::error::Result as DFResult;
+use datafusion::common::plan_datafusion_err;
 use paimon::catalog::{Catalog, Identifier};
 
 use crate::error::to_datafusion_error;
@@ -44,6 +49,8 @@ pub struct PaimonCatalogProvider {
     catalog: Arc<dyn Catalog>,
     /// Session-scoped dynamic options shared with the SQL context.
     dynamic_options: DynamicOptions,
+    /// In-memory schemas for temporary tables, keyed by schema name.
+    temp_schemas: RwLock<HashMap<String, Arc<MemorySchemaProvider>>>,
 }
 
 impl Debug for PaimonCatalogProvider {
@@ -62,6 +69,7 @@ impl PaimonCatalogProvider {
         PaimonCatalogProvider {
             catalog,
             dynamic_options: Default::default(),
+            temp_schemas: RwLock::new(HashMap::new()),
         }
     }
 
@@ -72,6 +80,7 @@ impl PaimonCatalogProvider {
         PaimonCatalogProvider {
             catalog,
             dynamic_options,
+            temp_schemas: RwLock::new(HashMap::new()),
         }
     }
 }
@@ -98,6 +107,11 @@ impl CatalogProvider for PaimonCatalogProvider {
     }
 
     fn schema(&self, name: &str) -> Option<Arc<dyn SchemaProvider>> {
+        // First check temp_schemas
+        if let Some(schema) = self.temp_schemas.read().unwrap().get(name) {
+            return Some(Arc::clone(schema) as Arc<dyn SchemaProvider>);
+        }
+
         let catalog = Arc::clone(&self.catalog);
         let dynamic_options = Arc::clone(&self.dynamic_options);
         let name = name.to_string();
@@ -166,6 +180,51 @@ impl CatalogProvider for PaimonCatalogProvider {
             },
             "paimon catalog access thread panicked",
         )
+    }
+}
+
+impl PaimonCatalogProvider {
+    /// Creates or returns an existing temporary in-memory schema under this catalog.
+    fn get_or_create_temp_schema(&self, name: &str) -> Arc<MemorySchemaProvider> {
+        let mut schemas = self.temp_schemas.write().unwrap();
+        schemas
+            .entry(name.to_string())
+            .or_insert_with(|| Arc::new(MemorySchemaProvider::new()))
+            .clone()
+    }
+
+    /// Registers a temporary table in the specified schema.
+    /// Creates the schema if it does not exist.
+    pub fn register_temp_table(
+        &self,
+        schema: &str,
+        table_name: &str,
+        schema_ref: SchemaRef,
+        batches: Vec<RecordBatch>,
+    ) -> DFResult<()> {
+        let mem_schema = self.get_or_create_temp_schema(schema);
+        let mem_table = MemTable::try_new(schema_ref, vec![batches])?;
+        mem_schema
+            .register_table(table_name.to_string(), Arc::new(mem_table))?;
+        Ok(())
+    }
+
+    /// Deregisters a temporary table from the specified schema.
+    pub fn deregister_temp_table(
+        &self,
+        schema: &str,
+        table_name: &str,
+    ) -> DFResult<Option<Arc<dyn TableProvider>>> {
+        let schemas = self.temp_schemas.read().unwrap();
+        let mem_schema = schemas
+            .get(schema)
+            .ok_or_else(|| plan_datafusion_err!("Unknown temp schema '{schema}'"))?;
+        mem_schema.deregister_table(table_name)
+    }
+
+    /// Returns whether a temp schema exists with the given name.
+    pub fn has_temp_schema(&self, name: &str) -> bool {
+        self.temp_schemas.read().unwrap().contains_key(name)
     }
 }
 

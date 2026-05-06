@@ -29,15 +29,16 @@ use paimon::table::{CopyOnWriteMergeWriter, Table};
 use crate::error::to_datafusion_error;
 use crate::merge_into::{
     build_partition_set_from_where, extract_tracking_columns, is_delete_conflict, ok_result,
-    register_cow_target_table, retry_on_conflict,
+    register_cow_target_table, retry_on_conflict, TempTableTracker, TEMP_SCHEMA,
 };
+use crate::sql_context::SQLContext;
 
 /// Execute a DELETE statement on a Paimon table.
 ///
 /// `table_ref` is the SQL table reference string (e.g. `"paimon.test_db.t"`),
 /// already extracted by the caller for catalog resolution.
 pub(crate) async fn execute_delete(
-    ctx: &SessionContext,
+    ctx: &SQLContext,
     delete: &Delete,
     table: Table,
     table_ref: &str,
@@ -68,25 +69,28 @@ pub(crate) async fn execute_delete(
         ));
     }
 
-    execute_cow_delete(ctx, delete, &table, table_ref).await
+    let catalog = ctx.current_catalog_name();
+    execute_cow_delete(ctx, &catalog, delete, &table, table_ref).await
 }
 
 /// Execute DELETE on an append-only table with retry on delete conflict.
 async fn execute_cow_delete(
-    ctx: &SessionContext,
+    ctx: &SQLContext,
+    catalog_name: &str,
     delete: &Delete,
     table: &Table,
     table_ref: &str,
 ) -> DFResult<DataFrame> {
     retry_on_conflict("CoW DELETE", is_delete_conflict, || {
-        execute_cow_delete_once(ctx, delete, table, table_ref)
+        execute_cow_delete_once(ctx, catalog_name, delete, table, table_ref)
     })
     .await
 }
 
 /// Single attempt of CoW DELETE execution.
 async fn execute_cow_delete_once(
-    ctx: &SessionContext,
+    ctx: &SQLContext,
+    catalog_name: &str,
     delete: &Delete,
     table: &Table,
     table_ref: &str,
@@ -99,14 +103,17 @@ async fn execute_cow_delete_once(
         .await
         .map_err(to_datafusion_error)?;
 
-    let (has_data, cow_table_guard) = register_cow_target_table(ctx, table, &writer).await?;
+    let mut temp_tracker = TempTableTracker::new();
+    let (has_data, cow_table_name) = register_cow_target_table(ctx, catalog_name, table, &writer, &mut temp_tracker).await?;
     if !has_data {
-        return ok_result(ctx, 0);
+        temp_tracker.deregister_all(ctx, catalog_name);
+        return ok_result(ctx.ctx(), 0);
     }
 
+    let cow_target_qualified = format!("{catalog_name}.{TEMP_SCHEMA}.{cow_table_name}");
     let result =
-        execute_cow_delete_inner(ctx, &cow_table_guard.qualified_name(), delete, &mut writer).await;
-    drop(cow_table_guard);
+        execute_cow_delete_inner(ctx.ctx(), &cow_target_qualified, delete, &mut writer).await;
+    temp_tracker.deregister_all(ctx, catalog_name);
     let total_count = result?;
 
     let messages = writer.prepare_commit().await.map_err(to_datafusion_error)?;
@@ -115,7 +122,7 @@ async fn execute_cow_delete_once(
         commit.commit(messages).await.map_err(to_datafusion_error)?;
     }
 
-    ok_result(ctx, total_count)
+    ok_result(ctx.ctx(), total_count)
 }
 
 async fn execute_cow_delete_inner(

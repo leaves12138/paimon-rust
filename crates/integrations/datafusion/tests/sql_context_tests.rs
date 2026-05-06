@@ -749,3 +749,185 @@ async fn test_one_part_table_name_uses_current_database() {
         "SELECT with 1-part name should resolve correctly"
     );
 }
+
+// ======================= TEMP TABLE =======================
+
+use datafusion::arrow::array::Int32Array;
+use datafusion::arrow::datatypes::{DataType as ArrowDataType, Field as ArrowField};
+
+#[tokio::test]
+async fn test_register_temp_table() {
+    let (_tmp, catalog) = create_test_env();
+    let ctx = create_sql_context(catalog.clone()).await;
+
+    let schema = Arc::new(Schema::new(vec![ArrowField::new(
+        "id",
+        ArrowDataType::Int32,
+        false,
+    )]));
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![Arc::new(Int32Array::from(vec![1, 2, 3]))],
+    )
+    .unwrap();
+
+    ctx.register_temp_table("paimon", "temp", "my_temp", schema, vec![batch])
+        .unwrap();
+
+    // Query the temp table via SQL
+    let batches = ctx
+        .sql("SELECT * FROM paimon.temp.my_temp")
+        .await
+        .unwrap()
+        .collect()
+        .await
+        .unwrap();
+
+    let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+    assert_eq!(total_rows, 3);
+}
+
+#[tokio::test]
+async fn test_register_temp_table_and_query_with_filter() {
+    let (_tmp, catalog) = create_test_env();
+    let ctx = create_sql_context(catalog.clone()).await;
+
+    let schema = Arc::new(Schema::new(vec![
+        ArrowField::new("id", ArrowDataType::Int32, false),
+        ArrowField::new("name", ArrowDataType::Utf8, true),
+    ]));
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![
+            Arc::new(Int32Array::from(vec![1, 2, 3, 4])),
+            Arc::new(StringArray::from(vec![
+                Some("alice"),
+                Some("bob"),
+                Some("charlie"),
+                Some("dave"),
+            ])),
+        ],
+    )
+    .unwrap();
+
+    ctx.register_temp_table("paimon", "temp", "users", schema, vec![batch])
+        .unwrap();
+
+    let batches = ctx
+        .sql("SELECT id, name FROM paimon.temp.users WHERE id > 2")
+        .await
+        .unwrap()
+        .collect()
+        .await
+        .unwrap();
+
+    let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+    assert_eq!(total_rows, 2);
+}
+
+#[tokio::test]
+async fn test_register_temp_table_unknown_catalog() {
+    let (_tmp, catalog) = create_test_env();
+    let ctx = create_sql_context(catalog.clone()).await;
+
+    let schema = Arc::new(Schema::new(vec![ArrowField::new(
+        "id",
+        ArrowDataType::Int32,
+        false,
+    )]));
+
+    let result = ctx.register_temp_table("nonexistent", "temp", "t", schema, vec![]);
+    assert!(result.is_err());
+    let err_msg = result.unwrap_err().to_string();
+    assert!(err_msg.contains("Unknown catalog"));
+}
+
+#[tokio::test]
+async fn test_deregister_temp_table() {
+    let (_tmp, catalog) = create_test_env();
+    let ctx = create_sql_context(catalog.clone()).await;
+
+    let schema = Arc::new(Schema::new(vec![ArrowField::new(
+        "id",
+        ArrowDataType::Int32,
+        false,
+    )]));
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![Arc::new(Int32Array::from(vec![1, 2]))],
+    )
+    .unwrap();
+
+    ctx.register_temp_table("paimon", "temp", "my_temp", schema.clone(), vec![batch])
+        .unwrap();
+
+    // Deregister
+    ctx.deregister_temp_table("paimon", "temp", "my_temp")
+        .unwrap();
+
+    // Query should fail
+    let result = ctx.sql("SELECT * FROM paimon.temp.my_temp").await;
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn test_multiple_temp_tables_in_same_schema() {
+    let (_tmp, catalog) = create_test_env();
+    let ctx = create_sql_context(catalog.clone()).await;
+
+    let schema1 = Arc::new(Schema::new(vec![ArrowField::new(
+        "id",
+        ArrowDataType::Int32,
+        false,
+    )]));
+    let batch1 = RecordBatch::try_new(
+        schema1.clone(),
+        vec![Arc::new(Int32Array::from(vec![1, 2]))],
+    )
+    .unwrap();
+
+    let schema2 = Arc::new(Schema::new(vec![ArrowField::new(
+        "value",
+        ArrowDataType::Int32,
+        false,
+    )]));
+    let batch2 = RecordBatch::try_new(
+        schema2.clone(),
+        vec![Arc::new(Int32Array::from(vec![10, 20, 30]))],
+    )
+    .unwrap();
+
+    ctx.register_temp_table("paimon", "temp", "t1", schema1, vec![batch1])
+        .unwrap();
+    ctx.register_temp_table("paimon", "temp", "t2", schema2, vec![batch2])
+        .unwrap();
+
+    // Both should be queryable
+    let rows1 = ctx
+        .sql("SELECT * FROM paimon.temp.t1")
+        .await
+        .unwrap()
+        .collect()
+        .await
+        .unwrap()
+        .iter()
+        .map(|b| b.num_rows())
+        .sum::<usize>();
+    assert_eq!(rows1, 2);
+
+    let rows2 = ctx
+        .sql("SELECT * FROM paimon.temp.t2")
+        .await
+        .unwrap()
+        .collect()
+        .await
+        .unwrap()
+        .iter()
+        .map(|b| b.num_rows())
+        .sum::<usize>();
+    assert_eq!(rows2, 3);
+}
+
+use datafusion::arrow::array::StringArray;
+use datafusion::arrow::datatypes::Schema;
+use datafusion::arrow::record_batch::RecordBatch;

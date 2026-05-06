@@ -43,6 +43,7 @@ use datafusion::arrow::array::{
 use datafusion::arrow::compute::cast;
 use datafusion::arrow::datatypes::{DataType as ArrowDataType, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::datasource::TableProvider;
 use datafusion::error::{DataFusionError, Result as DFResult};
 use datafusion::prelude::{DataFrame, SessionContext};
 use datafusion::sql::sqlparser::ast::{
@@ -174,6 +175,65 @@ impl SQLContext {
     /// Returns a reference to the inner [`SessionContext`].
     pub fn ctx(&self) -> &SessionContext {
         &self.ctx
+    }
+
+    /// Registers a temporary in-memory table in the specified catalog and schema.
+    ///
+    /// The table exists only for the lifetime of this SQLContext instance.
+    /// It can be queried via SQL using the fully qualified name: `catalog.schema.table`.
+    ///
+    /// # Example
+    /// ```ignore
+    /// ctx.register_temp_table("my_catalog", "temp", "my_table", schema, batches)?;
+    /// let df = ctx.sql("SELECT * FROM my_catalog.temp.my_table").await?;
+    /// ```
+    pub fn register_temp_table(
+        &self,
+        catalog: &str,
+        schema: &str,
+        table_name: &str,
+        schema_ref: Arc<Schema>,
+        batches: Vec<RecordBatch>,
+    ) -> DFResult<()> {
+        let catalog_provider = self
+            .ctx
+            .catalog(catalog)
+            .ok_or_else(|| DataFusionError::Plan(format!("Unknown catalog '{catalog}'")))?;
+
+        let paimon_provider = catalog_provider
+            .as_any()
+            .downcast_ref::<crate::catalog::PaimonCatalogProvider>()
+            .ok_or_else(|| {
+                DataFusionError::Plan(format!(
+                    "Catalog '{catalog}' is not a Paimon catalog"
+                ))
+            })?;
+
+        paimon_provider.register_temp_table(schema, table_name, schema_ref, batches)
+    }
+
+    /// Deregisters a temporary table from the specified catalog and schema.
+    pub fn deregister_temp_table(
+        &self,
+        catalog: &str,
+        schema: &str,
+        table_name: &str,
+    ) -> DFResult<Option<Arc<dyn TableProvider>>> {
+        let catalog_provider = self
+            .ctx
+            .catalog(catalog)
+            .ok_or_else(|| DataFusionError::Plan(format!("Unknown catalog '{catalog}'")))?;
+
+        let paimon_provider = catalog_provider
+            .as_any()
+            .downcast_ref::<crate::catalog::PaimonCatalogProvider>()
+            .ok_or_else(|| {
+                DataFusionError::Plan(format!(
+                    "Catalog '{catalog}' is not a Paimon catalog"
+                ))
+            })?;
+
+        paimon_provider.deregister_temp_table(schema, table_name)
     }
 
     #[cfg(test)]
@@ -458,7 +518,7 @@ impl SQLContext {
             .await
             .map_err(to_datafusion_error)?;
 
-        crate::merge_into::execute_merge_into(&self.ctx, merge, table).await
+        crate::merge_into::execute_merge_into(self, merge, table).await
     }
 
     async fn handle_update(&self, update: &Update) -> DFResult<DataFrame> {
@@ -477,7 +537,7 @@ impl SQLContext {
             .await
             .map_err(to_datafusion_error)?;
 
-        crate::update::execute_update(&self.ctx, update, table).await
+        crate::update::execute_update(self, update, table).await
     }
 
     async fn handle_delete(&self, delete: &Delete) -> DFResult<DataFrame> {
@@ -504,7 +564,7 @@ impl SQLContext {
             .map_err(to_datafusion_error)?;
 
         let table_ref = table_name.to_string();
-        crate::delete::execute_delete(&self.ctx, delete, table, &table_ref).await
+        crate::delete::execute_delete(self, delete, table, &table_ref).await
     }
 
     async fn handle_insert_overwrite_partition(&self, insert: &Insert) -> DFResult<DataFrame> {
@@ -721,7 +781,7 @@ impl SQLContext {
     }
 
     /// Returns the name of the current default catalog from DataFusion config.
-    fn current_catalog_name(&self) -> String {
+    pub(crate) fn current_catalog_name(&self) -> String {
         self.ctx
             .state()
             .config_options()

@@ -55,6 +55,47 @@ async fn example() -> Result<(), Box<dyn std::error::Error>> {
 
 `SQLContext::new` creates a session context with the Paimon relation planner pre-registered. Use `register_catalog` to add one or more Paimon catalogs. It also manages session-scoped dynamic options internally for `SET`/`RESET` support.
 
+## Temporary Tables
+
+You can register in-memory temporary tables under any catalog. Temporary tables exist only for the lifetime of the `SQLContext` instance and are automatically cleaned up when the context is dropped. They can be queried via SQL using the fully qualified `catalog.schema.table` name.
+
+```rust
+use datafusion::arrow::array::Int32Array;
+use datafusion::arrow::datatypes::{DataType as ArrowDataType, Field, Schema};
+use datafusion::arrow::record_batch::RecordBatch;
+
+let schema = Arc::new(Schema::new(vec![
+    Field::new("id", ArrowDataType::Int32, false),
+    Field::new("name", ArrowDataType::Utf8, true),
+]));
+let batch = RecordBatch::try_new(
+    schema.clone(),
+    vec![
+        Arc::new(Int32Array::from(vec![1, 2, 3])),
+        Arc::new(StringArray::from(vec!["alice", "bob", "carol"])),
+    ],
+)?;
+
+ctx.register_temp_table("paimon", "temp", "users", schema, vec![batch])?;
+
+// Query via SQL
+let df = ctx.sql("SELECT * FROM paimon.temp.users WHERE id > 1").await?;
+df.show().await?;
+
+// Optionally deregister early
+ctx.deregister_temp_table("paimon", "temp", "users")?;
+```
+
+Multiple temporary tables can share the same schema — the schema is created automatically on first use:
+
+```rust
+ctx.register_temp_table("paimon", "temp", "table_a", schema_a, vec![batch_a])?;
+ctx.register_temp_table("paimon", "temp", "table_b", schema_b, vec![batch_b])?;
+
+// Join two temp tables
+let df = ctx.sql("SELECT * FROM paimon.temp.table_a JOIN paimon.temp.table_b ON a.id = b.id").await?;
+```
+
 ## Data Types
 
 The following SQL data types are supported in CREATE TABLE and mapped to their corresponding Paimon types:
