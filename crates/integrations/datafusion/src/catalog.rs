@@ -27,10 +27,10 @@ use async_trait::async_trait;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::catalog::{CatalogProvider, MemorySchemaProvider, SchemaProvider};
+use datafusion::common::plan_datafusion_err;
 use datafusion::datasource::MemTable;
 use datafusion::datasource::TableProvider;
 use datafusion::error::Result as DFResult;
-use datafusion::common::plan_datafusion_err;
 use paimon::catalog::{Catalog, Identifier};
 
 use crate::error::to_datafusion_error;
@@ -108,7 +108,10 @@ impl CatalogProvider for PaimonCatalogProvider {
 
     fn schema(&self, name: &str) -> Option<Arc<dyn SchemaProvider>> {
         // First check temp_databases
-        let databases = self.temp_databases.read().unwrap_or_else(|e| e.into_inner());
+        let databases = self
+            .temp_databases
+            .read()
+            .unwrap_or_else(|e| e.into_inner());
         if let Some(schema) = databases.get(name) {
             return Some(Arc::clone(schema) as Arc<dyn SchemaProvider>);
         }
@@ -187,7 +190,10 @@ impl CatalogProvider for PaimonCatalogProvider {
 impl PaimonCatalogProvider {
     /// Creates or returns an existing temporary in-memory database under this catalog.
     fn get_or_create_temp_database(&self, name: &str) -> Arc<MemorySchemaProvider> {
-        let mut databases = self.temp_databases.write().unwrap_or_else(|e| e.into_inner());
+        let mut databases = self
+            .temp_databases
+            .write()
+            .unwrap_or_else(|e| e.into_inner());
         databases
             .entry(name.to_string())
             .or_insert_with(|| Arc::new(MemorySchemaProvider::new()))
@@ -205,8 +211,7 @@ impl PaimonCatalogProvider {
     ) -> DFResult<()> {
         let mem_database = self.get_or_create_temp_database(database);
         let mem_table = MemTable::try_new(schema_ref, vec![batches])?;
-        mem_database
-            .register_table(table_name.to_string(), Arc::new(mem_table))?;
+        mem_database.register_table(table_name.to_string(), Arc::new(mem_table))?;
         Ok(())
     }
 
@@ -216,7 +221,10 @@ impl PaimonCatalogProvider {
         database: &str,
         table_name: &str,
     ) -> DFResult<Option<Arc<dyn TableProvider>>> {
-        let databases = self.temp_databases.read().unwrap_or_else(|e| e.into_inner());
+        let databases = self
+            .temp_databases
+            .read()
+            .unwrap_or_else(|e| e.into_inner());
         let mem_database = databases
             .get(database)
             .ok_or_else(|| plan_datafusion_err!("Unknown temp database '{database}'"))?;
@@ -225,7 +233,10 @@ impl PaimonCatalogProvider {
 
     /// Returns whether a temp database exists with the given name.
     pub fn has_temp_database(&self, name: &str) -> bool {
-        self.temp_databases.read().unwrap_or_else(|e| e.into_inner()).contains_key(name)
+        self.temp_databases
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains_key(name)
     }
 }
 

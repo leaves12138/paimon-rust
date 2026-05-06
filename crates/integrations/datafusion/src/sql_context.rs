@@ -212,9 +212,7 @@ impl SQLContext {
             .as_any()
             .downcast_ref::<crate::catalog::PaimonCatalogProvider>()
             .ok_or_else(|| {
-                DataFusionError::Plan(format!(
-                    "Catalog '{catalog}' is not a Paimon catalog"
-                ))
+                DataFusionError::Plan(format!("Catalog '{catalog}' is not a Paimon catalog"))
             })?;
 
         paimon_provider.register_temp_table(&database, &table_name, schema_ref, batches)
@@ -237,9 +235,7 @@ impl SQLContext {
             .as_any()
             .downcast_ref::<crate::catalog::PaimonCatalogProvider>()
             .ok_or_else(|| {
-                DataFusionError::Plan(format!(
-                    "Catalog '{catalog}' is not a Paimon catalog"
-                ))
+                DataFusionError::Plan(format!("Catalog '{catalog}' is not a Paimon catalog"))
             })?;
 
         paimon_provider.deregister_temp_table(&database, &table_name)
@@ -263,9 +259,11 @@ impl SQLContext {
                 let catalog = self.current_catalog_name();
                 Ok((catalog, schema.to_string(), table.to_string()))
             }
-            TableReference::Full { catalog, schema, table } => {
-                Ok((catalog.to_string(), schema.to_string(), table.to_string()))
-            }
+            TableReference::Full {
+                catalog,
+                schema,
+                table,
+            } => Ok((catalog.to_string(), schema.to_string(), table.to_string())),
         }
     }
 

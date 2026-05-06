@@ -193,7 +193,8 @@ async fn execute_cow_update_once(
         .map_err(to_datafusion_error)?;
 
     let mut temp_tracker = TempTableTracker::new(ctx);
-    let (has_data, cow_table_name) = register_cow_target_table(ctx, table, &writer, &mut temp_tracker).await?;
+    let (has_data, cow_table_name) =
+        register_cow_target_table(ctx, table, &writer, &mut temp_tracker).await?;
     if !has_data {
         return ok_result(ctx.ctx(), 0);
     }
@@ -525,8 +526,7 @@ mod tests {
             .await
             .unwrap();
 
-        let update =
-            parse_update("UPDATE paimon.test_db.t_row_id SET name = 'ALICE' WHERE id = 1");
+        let update = parse_update("UPDATE paimon.test_db.t_row_id SET name = 'ALICE' WHERE id = 1");
         execute_update(&sql_context, &update, table).await.unwrap();
 
         // Get row IDs after update

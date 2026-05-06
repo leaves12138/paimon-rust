@@ -891,18 +891,14 @@ async fn test_deregister_temp_table() {
         ArrowDataType::Int32,
         false,
     )]));
-    let batch = RecordBatch::try_new(
-        schema.clone(),
-        vec![Arc::new(Int32Array::from(vec![1, 2]))],
-    )
-    .unwrap();
+    let batch =
+        RecordBatch::try_new(schema.clone(), vec![Arc::new(Int32Array::from(vec![1, 2]))]).unwrap();
 
     ctx.register_temp_table("paimon.my_db.my_temp", schema.clone(), vec![batch])
         .unwrap();
 
     // Deregister with flexible name
-    ctx.deregister_temp_table("paimon.my_db.my_temp")
-        .unwrap();
+    ctx.deregister_temp_table("paimon.my_db.my_temp").unwrap();
 
     // Query should fail
     let result = ctx.sql("SELECT * FROM paimon.my_db.my_temp").await;

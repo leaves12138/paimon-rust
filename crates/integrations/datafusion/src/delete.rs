@@ -27,11 +27,11 @@ use paimon::spec::CoreOptions;
 use paimon::table::{CopyOnWriteMergeWriter, Table};
 
 use crate::error::to_datafusion_error;
+use crate::merge_into::TempTableTracker;
 use crate::merge_into::{
     build_partition_set_from_where, extract_tracking_columns, is_delete_conflict, ok_result,
     register_cow_target_table, retry_on_conflict,
 };
-use crate::merge_into::TempTableTracker;
 use crate::sql_context::SQLContext;
 
 /// Execute a DELETE statement on a Paimon table.
@@ -102,7 +102,8 @@ async fn execute_cow_delete_once(
         .map_err(to_datafusion_error)?;
 
     let mut temp_tracker = TempTableTracker::new(ctx);
-    let (has_data, cow_table_name) = register_cow_target_table(ctx, table, &writer, &mut temp_tracker).await?;
+    let (has_data, cow_table_name) =
+        register_cow_target_table(ctx, table, &writer, &mut temp_tracker).await?;
     if !has_data {
         return ok_result(ctx.ctx(), 0);
     }

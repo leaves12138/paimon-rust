@@ -296,11 +296,7 @@ fn extract_cow_merge_clauses(merge: &Merge) -> DFResult<CowMergeClauses> {
 }
 
 /// Execute MERGE INTO on an append-only table with retry on delete conflict.
-async fn execute_cow_merge(
-    ctx: &SQLContext,
-    merge: &Merge,
-    table: Table,
-) -> DFResult<DataFrame> {
+async fn execute_cow_merge(ctx: &SQLContext, merge: &Merge, table: Table) -> DFResult<DataFrame> {
     retry_on_conflict("CoW MERGE INTO", is_delete_conflict, || {
         execute_cow_merge_once(ctx, merge, &table)
     })
@@ -853,8 +849,7 @@ async fn build_insert_batches(
     ctx.register_temp_table(&tmp_name, first_schema, source_batches)?;
     temp_tracker.register(&tmp_name);
 
-    let result =
-        build_insert_batches_inner(ctx, inserts, s_alias, &tmp_name, table_fields).await;
+    let result = build_insert_batches_inner(ctx, inserts, s_alias, &tmp_name, table_fields).await;
 
     result
 }
@@ -1525,9 +1520,7 @@ mod tests {
 
         // Create source table with updates
         sql_context
-            .sql(
-                "CREATE TABLE paimon.test_db.source (id INT, name VARCHAR)",
-            )
+            .sql("CREATE TABLE paimon.test_db.source (id INT, name VARCHAR)")
             .await
             .unwrap()
             .collect()
@@ -1539,7 +1532,9 @@ mod tests {
             "MERGE INTO paimon.test_db.target t USING paimon.test_db.source s ON t.id = s.id \
              WHEN MATCHED THEN UPDATE SET name = s.name",
         );
-        execute_merge_into(&sql_context, &merge, table).await.unwrap();
+        execute_merge_into(&sql_context, &merge, table)
+            .await
+            .unwrap();
 
         let batches = sql_context
             .sql("SELECT id, name, value FROM paimon.test_db.target ORDER BY id")
@@ -1585,20 +1580,21 @@ mod tests {
     async fn test_merge_into_no_matches() {
         let (_tmp, sql_context, table) = setup_data_evolution_table("t_merge2").await;
 
-        sql_context.sql(
-            "CREATE TABLE paimon.test_db.source (id INT, name VARCHAR)",
-        )
-        .await
-        .unwrap()
-        .collect()
-        .await
-        .unwrap();
+        sql_context
+            .sql("CREATE TABLE paimon.test_db.source (id INT, name VARCHAR)")
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
 
         let merge = parse_merge(
             "MERGE INTO paimon.test_db.t_cow_upd t USING paimon.test_db.source s ON t.id = s.id \
              WHEN MATCHED THEN UPDATE SET name = s.name",
         );
-        let result = execute_merge_into(&sql_context, &merge, table).await.unwrap();
+        let result = execute_merge_into(&sql_context, &merge, table)
+            .await
+            .unwrap();
         let batches = result.collect().await.unwrap();
         let count = batches[0]
             .column(0)
@@ -1728,7 +1724,9 @@ mod tests {
             "MERGE INTO paimon.test_db.t_cow_upd t USING paimon.test_db.source s ON t.id = s.id \
              WHEN MATCHED THEN UPDATE SET name = s.name",
         );
-        execute_merge_into(&sql_context, &merge, table).await.unwrap();
+        execute_merge_into(&sql_context, &merge, table)
+            .await
+            .unwrap();
 
         let batches = sql_context
             .sql("SELECT id, name, value FROM paimon.test_db.t_cow_upd ORDER BY id")
@@ -1753,14 +1751,25 @@ mod tests {
     async fn test_cow_merge_delete_matched_rows() {
         let (_tmp, sql_context, table) = setup_append_only_table("t_cow_del").await;
 
-        sql_context.sql("CREATE TABLE paimon.test_db.source (id INT)").await.unwrap();
-        sql_context.sql("INSERT INTO paimon.test_db.source (id INT) VALUES ((2))").await.unwrap().collect().await.unwrap();
+        sql_context
+            .sql("CREATE TABLE paimon.test_db.source (id INT)")
+            .await
+            .unwrap();
+        sql_context
+            .sql("INSERT INTO paimon.test_db.source (id INT) VALUES ((2))")
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
 
         let merge = parse_merge(
             "MERGE INTO paimon.test_db.t_cow_upd t USING paimon.test_db.source s ON t.id = s.id \
              WHEN MATCHED THEN DELETE",
         );
-        execute_merge_into(&sql_context, &merge, table).await.unwrap();
+        execute_merge_into(&sql_context, &merge, table)
+            .await
+            .unwrap();
 
         let batches = sql_context
             .sql("SELECT id, name, value FROM paimon.test_db.t_cow_upd ORDER BY id")
@@ -1781,14 +1790,19 @@ mod tests {
     async fn test_cow_merge_insert_not_matched() {
         let (_tmp, sql_context, table) = setup_append_only_table("t_cow_ins").await;
 
-        sql_context.sql("CREATE TABLE paimon.test_db.source (id INT, name VARCHAR, value INT)").await.unwrap();
+        sql_context
+            .sql("CREATE TABLE paimon.test_db.source (id INT, name VARCHAR, value INT)")
+            .await
+            .unwrap();
         sql_context.sql("INSERT INTO paimon.test_db.source (id INT, name VARCHAR, value INT) VALUES ((4, 'dave', 40), (5, 'eve', 50))").await.unwrap().collect().await.unwrap();
 
         let merge = parse_merge(
             "MERGE INTO paimon.test_db.t_cow_upd t USING paimon.test_db.source s ON t.id = s.id \
              WHEN NOT MATCHED THEN INSERT (id, name, value) VALUES (s.id, s.name, s.value)",
         );
-        execute_merge_into(&sql_context, &merge, table).await.unwrap();
+        execute_merge_into(&sql_context, &merge, table)
+            .await
+            .unwrap();
 
         let batches = sql_context
             .sql("SELECT id, name, value FROM paimon.test_db.t_cow_upd ORDER BY id")
@@ -1815,7 +1829,10 @@ mod tests {
     async fn test_cow_merge_update_and_insert() {
         let (_tmp, sql_context, table) = setup_append_only_table("t_cow_upsert").await;
 
-        sql_context.sql("CREATE TABLE paimon.test_db.source (id INT, name VARCHAR, value INT)").await.unwrap();
+        sql_context
+            .sql("CREATE TABLE paimon.test_db.source (id INT, name VARCHAR, value INT)")
+            .await
+            .unwrap();
         sql_context.sql("INSERT INTO paimon.test_db.source (id INT, name VARCHAR, value INT) VALUES ((2, 'BOB', 200), (4, 'dave', 40))").await.unwrap().collect().await.unwrap();
 
         let merge = parse_merge(
@@ -1823,7 +1840,9 @@ mod tests {
              WHEN MATCHED THEN UPDATE SET name = s.name, value = s.value \
              WHEN NOT MATCHED THEN INSERT (id, name, value) VALUES (s.id, s.name, s.value)",
         );
-        execute_merge_into(&sql_context, &merge, table).await.unwrap();
+        execute_merge_into(&sql_context, &merge, table)
+            .await
+            .unwrap();
 
         let batches = sql_context
             .sql("SELECT id, name, value FROM paimon.test_db.t_cow_upd ORDER BY id")
@@ -1849,20 +1868,21 @@ mod tests {
     async fn test_cow_merge_no_matches() {
         let (_tmp, sql_context, table) = setup_append_only_table("t_cow_nomatch").await;
 
-        sql_context.sql(
-            "CREATE TABLE paimon.test_db.source (id INT, name VARCHAR)",
-        )
-        .await
-        .unwrap()
-        .collect()
-        .await
-        .unwrap();
+        sql_context
+            .sql("CREATE TABLE paimon.test_db.source (id INT, name VARCHAR)")
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
 
         let merge = parse_merge(
             "MERGE INTO paimon.test_db.t_cow_upd t USING paimon.test_db.source s ON t.id = s.id \
              WHEN MATCHED THEN UPDATE SET name = s.name",
         );
-        let result = execute_merge_into(&sql_context, &merge, table).await.unwrap();
+        let result = execute_merge_into(&sql_context, &merge, table)
+            .await
+            .unwrap();
         let batches = result.collect().await.unwrap();
         let count = batches[0]
             .column(0)
