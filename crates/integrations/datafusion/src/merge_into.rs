@@ -57,39 +57,32 @@ fn next_cow_table_name(prefix: &str) -> String {
     format!("{prefix}_{id}")
 }
 
-/// Schema name used for internal temporary tables within a catalog.
-pub(crate) const TEMP_SCHEMA: &str = "__temp";
-
 /// Tracks registered temporary table names and auto-cleans them up on drop.
 ///
 /// This RAII guard ensures temp tables are always deregistered, even if the
 /// enclosing function panics or returns early with an error.
 pub(crate) struct TempTableTracker<'a> {
-    tables: Vec<(String, String)>, // (schema, table_name)
-    catalog: String,
+    tables: Vec<String>,
     ctx: &'a SQLContext,
 }
 
 impl<'a> TempTableTracker<'a> {
-    pub(crate) fn new(catalog: &str, ctx: &'a SQLContext) -> Self {
+    pub(crate) fn new(ctx: &'a SQLContext) -> Self {
         Self {
             tables: Vec::new(),
-            catalog: catalog.to_string(),
             ctx,
         }
     }
 
-    pub(crate) fn register(&mut self, schema: &str, table_name: &str) {
-        self.tables
-            .push((schema.to_string(), table_name.to_string()));
+    pub(crate) fn register(&mut self, table_name: &str) {
+        self.tables.push(table_name.to_string());
     }
 }
 
 impl Drop for TempTableTracker<'_> {
     fn drop(&mut self) {
-        for (schema, table) in &self.tables {
-            let name = format!("{}.{}.{}", self.catalog, schema, table);
-            let _ = self.ctx.deregister_temp_table(&name);
+        for table in &self.tables {
+            let _ = self.ctx.deregister_temp_table(table);
         }
     }
 }
@@ -133,14 +126,13 @@ pub(crate) async fn execute_merge_into(
     merge: &Merge,
     table: Table,
 ) -> DFResult<DataFrame> {
-    let catalog = ctx.current_catalog_name();
     let schema = table.schema();
     let core_options = CoreOptions::new(schema.options());
 
     if core_options.data_evolution_enabled() {
-        execute_data_evolution_merge(ctx, &catalog, merge, table).await
+        execute_data_evolution_merge(ctx, merge, table).await
     } else if schema.trimmed_primary_keys().is_empty() {
-        execute_cow_merge(ctx, &catalog, merge, table).await
+        execute_cow_merge(ctx, merge, table).await
     } else {
         Err(DataFusionError::Plan(
             "MERGE INTO on primary-key tables without data-evolution is not supported".to_string(),
@@ -171,12 +163,11 @@ pub(crate) fn is_delete_conflict(err: &DataFusionError) -> bool {
 /// Execute MERGE INTO on a data evolution table with retry on row ID conflict.
 async fn execute_data_evolution_merge(
     ctx: &SQLContext,
-    catalog_name: &str,
     merge: &Merge,
     table: Table,
 ) -> DFResult<DataFrame> {
     retry_on_conflict("MERGE INTO", is_row_id_conflict, || {
-        execute_merge_into_once(ctx, catalog_name, merge, &table)
+        execute_merge_into_once(ctx, merge, &table)
     })
     .await
 }
@@ -307,12 +298,11 @@ fn extract_cow_merge_clauses(merge: &Merge) -> DFResult<CowMergeClauses> {
 /// Execute MERGE INTO on an append-only table with retry on delete conflict.
 async fn execute_cow_merge(
     ctx: &SQLContext,
-    catalog_name: &str,
     merge: &Merge,
     table: Table,
 ) -> DFResult<DataFrame> {
     retry_on_conflict("CoW MERGE INTO", is_delete_conflict, || {
-        execute_cow_merge_once(ctx, catalog_name, merge, &table)
+        execute_cow_merge_once(ctx, merge, &table)
     })
     .await
 }
@@ -320,7 +310,6 @@ async fn execute_cow_merge(
 /// Execute a single attempt of CoW MERGE INTO.
 async fn execute_cow_merge_once(
     ctx: &SQLContext,
-    catalog_name: &str,
     merge: &Merge,
     table: &Table,
 ) -> DFResult<DataFrame> {
@@ -373,9 +362,9 @@ async fn execute_cow_merge_once(
     }
 
     // Read each target file individually, attach __paimon_file_idx and __paimon_row_offset
-    let mut temp_tracker = TempTableTracker::new(catalog_name, ctx);
+    let mut temp_tracker = TempTableTracker::new(ctx);
     let (has_target_data, cow_table_name) =
-        register_cow_target_table(ctx, catalog_name, table, &writer, &mut temp_tracker).await?;
+        register_cow_target_table(ctx, table, &writer, &mut temp_tracker).await?;
 
     let merge_ctx = CowMergeContext {
         source_ref: &source_ref,
@@ -389,7 +378,6 @@ async fn execute_cow_merge_once(
 
     let result = execute_cow_merge_inner(
         ctx,
-        catalog_name,
         &clauses,
         &mut writer,
         table,
@@ -432,7 +420,6 @@ struct CowMergeContext<'a> {
 /// Returns (insert_commit_messages, total_affected_count).
 async fn execute_cow_merge_inner(
     ctx: &SQLContext,
-    catalog_name: &str,
     clauses: &CowMergeClauses,
     writer: &mut CopyOnWriteMergeWriter,
     table: &Table,
@@ -445,7 +432,7 @@ async fn execute_cow_merge_inner(
     let on_condition = merge_ctx.on_condition;
     let has_target_data = merge_ctx.has_target_data;
     let cow_table_name = &merge_ctx.cow_table_name;
-    let cow_target_qualified = format!("{catalog_name}.{TEMP_SCHEMA}.{cow_table_name}");
+    let cow_target_qualified = cow_table_name.clone();
     let update_columns = merge_ctx.update_columns;
     let mut insert_messages = Vec::new();
     let mut total_count: u64 = 0;
@@ -602,7 +589,6 @@ async fn execute_cow_merge_inner(
         if !not_matched_batches.is_empty() {
             let insert_batches = build_insert_batches(
                 ctx,
-                catalog_name,
                 &not_matched_batches,
                 &clauses.inserts,
                 s_alias,
@@ -643,7 +629,6 @@ async fn execute_cow_merge_inner(
 
 async fn execute_merge_into_once(
     ctx: &SQLContext,
-    catalog_name: &str,
     merge: &Merge,
     table: &Table,
 ) -> DFResult<DataFrame> {
@@ -735,10 +720,9 @@ async fn execute_merge_into_once(
             .iter()
             .map(|f| f.name().to_string())
             .collect();
-        let mut temp_tracker = TempTableTracker::new(catalog_name, ctx);
+        let mut temp_tracker = TempTableTracker::new(ctx);
         let insert_batches = build_insert_batches(
             ctx,
-            catalog_name,
             &not_matched_batches,
             &parsed.inserts,
             s_alias,
@@ -848,7 +832,6 @@ pub(crate) fn project_update_columns(
 /// Build insert batches from not-matched rows, applying INSERT clause projections and predicates.
 async fn build_insert_batches(
     ctx: &SQLContext,
-    catalog_name: &str,
     not_matched_batches: &[RecordBatch],
     inserts: &[MergeInsertClause],
     s_alias: &str,
@@ -867,16 +850,11 @@ async fn build_insert_batches(
     let first_schema = source_batches[0].schema();
     let tmp_name = next_cow_table_name("__merge_not_matched");
 
-    ctx.register_temp_table(
-        format!("{catalog_name}.{TEMP_SCHEMA}.{tmp_name}"),
-        first_schema,
-        source_batches,
-    )?;
-    temp_tracker.register(TEMP_SCHEMA, &tmp_name);
-    let qualified_tmp = format!("{catalog_name}.{TEMP_SCHEMA}.{tmp_name}");
+    ctx.register_temp_table(&tmp_name, first_schema, source_batches)?;
+    temp_tracker.register(&tmp_name);
 
     let result =
-        build_insert_batches_inner(ctx, inserts, s_alias, &qualified_tmp, table_fields).await;
+        build_insert_batches_inner(ctx, inserts, s_alias, &tmp_name, table_fields).await;
 
     result
 }
@@ -1187,7 +1165,6 @@ pub(crate) fn extract_tracking_columns(
 /// optimization could stream or batch-process files instead of materializing everything.
 pub(crate) async fn register_cow_target_table(
     ctx: &SQLContext,
-    catalog_name: &str,
     table: &Table,
     writer: &CopyOnWriteMergeWriter,
     temp_tracker: &mut TempTableTracker<'_>,
@@ -1294,12 +1271,8 @@ pub(crate) async fn register_cow_target_table(
 
     if has_data {
         let s = schema.unwrap();
-        ctx.register_temp_table(
-            format!("{catalog_name}.{TEMP_SCHEMA}.{table_name}"),
-            s,
-            all_batches,
-        )?;
-        temp_tracker.register(TEMP_SCHEMA, &table_name);
+        ctx.register_temp_table(&table_name, s, all_batches)?;
+        temp_tracker.register(&table_name);
     }
 
     Ok((has_data, table_name))

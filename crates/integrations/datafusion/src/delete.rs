@@ -29,10 +29,10 @@ use paimon::table::{CopyOnWriteMergeWriter, Table};
 use crate::error::to_datafusion_error;
 use crate::merge_into::{
     build_partition_set_from_where, extract_tracking_columns, is_delete_conflict, ok_result,
-    register_cow_target_table, retry_on_conflict, TEMP_SCHEMA,
+    register_cow_target_table, retry_on_conflict,
 };
-use crate::sql_context::SQLContext;
 use crate::merge_into::TempTableTracker;
+use crate::sql_context::SQLContext;
 
 /// Execute a DELETE statement on a Paimon table.
 ///
@@ -70,20 +70,18 @@ pub(crate) async fn execute_delete(
         ));
     }
 
-    let catalog = ctx.current_catalog_name();
-    execute_cow_delete(ctx, &catalog, delete, &table, table_ref).await
+    execute_cow_delete(ctx, delete, &table, table_ref).await
 }
 
 /// Execute DELETE on an append-only table with retry on delete conflict.
 async fn execute_cow_delete(
     ctx: &SQLContext,
-    catalog_name: &str,
     delete: &Delete,
     table: &Table,
     table_ref: &str,
 ) -> DFResult<DataFrame> {
     retry_on_conflict("CoW DELETE", is_delete_conflict, || {
-        execute_cow_delete_once(ctx, catalog_name, delete, table, table_ref)
+        execute_cow_delete_once(ctx, delete, table, table_ref)
     })
     .await
 }
@@ -91,7 +89,6 @@ async fn execute_cow_delete(
 /// Single attempt of CoW DELETE execution.
 async fn execute_cow_delete_once(
     ctx: &SQLContext,
-    catalog_name: &str,
     delete: &Delete,
     table: &Table,
     table_ref: &str,
@@ -104,13 +101,13 @@ async fn execute_cow_delete_once(
         .await
         .map_err(to_datafusion_error)?;
 
-    let mut temp_tracker = TempTableTracker::new(catalog_name, ctx);
-    let (has_data, cow_table_name) = register_cow_target_table(ctx, catalog_name, table, &writer, &mut temp_tracker).await?;
+    let mut temp_tracker = TempTableTracker::new(ctx);
+    let (has_data, cow_table_name) = register_cow_target_table(ctx, table, &writer, &mut temp_tracker).await?;
     if !has_data {
         return ok_result(ctx.ctx(), 0);
     }
 
-    let cow_target_qualified = format!("{catalog_name}.{TEMP_SCHEMA}.{cow_table_name}");
+    let cow_target_qualified = cow_table_name;
     let result =
         execute_cow_delete_inner(ctx.ctx(), &cow_target_qualified, delete, &mut writer).await;
     let total_count = result?;

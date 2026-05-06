@@ -37,7 +37,7 @@ use crate::error::to_datafusion_error;
 use crate::merge_into::{
     build_partition_set_from_where, extract_tracking_columns, is_delete_conflict,
     is_row_id_conflict, ok_result, project_update_columns, quote_identifier,
-    register_cow_target_table, retry_on_conflict, TempTableTracker, TEMP_SCHEMA,
+    register_cow_target_table, retry_on_conflict, TempTableTracker,
 };
 use crate::sql_context::SQLContext;
 
@@ -169,9 +169,8 @@ async fn execute_cow_update(
     update: &Update,
     table: &Table,
 ) -> DFResult<DataFrame> {
-    let catalog = ctx.current_catalog_name();
     retry_on_conflict("CoW UPDATE", is_delete_conflict, || {
-        execute_cow_update_once(ctx, &catalog, update, table)
+        execute_cow_update_once(ctx, update, table)
     })
     .await
 }
@@ -179,7 +178,6 @@ async fn execute_cow_update(
 /// Single attempt of CoW UPDATE execution.
 async fn execute_cow_update_once(
     ctx: &SQLContext,
-    catalog_name: &str,
     update: &Update,
     table: &Table,
 ) -> DFResult<DataFrame> {
@@ -194,13 +192,13 @@ async fn execute_cow_update_once(
         .await
         .map_err(to_datafusion_error)?;
 
-    let mut temp_tracker = TempTableTracker::new(catalog_name, ctx);
-    let (has_data, cow_table_name) = register_cow_target_table(ctx, catalog_name, table, &writer, &mut temp_tracker).await?;
+    let mut temp_tracker = TempTableTracker::new(ctx);
+    let (has_data, cow_table_name) = register_cow_target_table(ctx, table, &writer, &mut temp_tracker).await?;
     if !has_data {
         return ok_result(ctx.ctx(), 0);
     }
 
-    let cow_target_qualified = format!("{catalog_name}.{TEMP_SCHEMA}.{cow_table_name}");
+    let cow_target_qualified = cow_table_name;
     let result = execute_cow_update_inner(
         ctx.ctx(),
         &columns,
