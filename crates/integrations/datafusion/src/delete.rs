@@ -29,9 +29,10 @@ use paimon::table::{CopyOnWriteMergeWriter, Table};
 use crate::error::to_datafusion_error;
 use crate::merge_into::{
     build_partition_set_from_where, extract_tracking_columns, is_delete_conflict, ok_result,
-    register_cow_target_table, retry_on_conflict, TempTableTracker, TEMP_SCHEMA,
+    register_cow_target_table, retry_on_conflict, TEMP_SCHEMA,
 };
 use crate::sql_context::SQLContext;
+use crate::merge_into::TempTableTracker;
 
 /// Execute a DELETE statement on a Paimon table.
 ///
@@ -103,17 +104,15 @@ async fn execute_cow_delete_once(
         .await
         .map_err(to_datafusion_error)?;
 
-    let mut temp_tracker = TempTableTracker::new();
+    let mut temp_tracker = TempTableTracker::new(catalog_name, ctx);
     let (has_data, cow_table_name) = register_cow_target_table(ctx, catalog_name, table, &writer, &mut temp_tracker).await?;
     if !has_data {
-        temp_tracker.deregister_all(ctx, catalog_name);
         return ok_result(ctx.ctx(), 0);
     }
 
     let cow_target_qualified = format!("{catalog_name}.{TEMP_SCHEMA}.{cow_table_name}");
     let result =
         execute_cow_delete_inner(ctx.ctx(), &cow_target_qualified, delete, &mut writer).await;
-    temp_tracker.deregister_all(ctx, catalog_name);
     let total_count = result?;
 
     let messages = writer.prepare_commit().await.map_err(to_datafusion_error)?;

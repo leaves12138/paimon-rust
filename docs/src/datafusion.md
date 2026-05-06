@@ -57,7 +57,12 @@ async fn example() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Temporary Tables
 
-You can register in-memory temporary tables under any catalog. Temporary tables exist only for the lifetime of the `SQLContext` instance and are automatically cleaned up when the context is dropped. They can be queried via SQL using the fully qualified `catalog.schema.table` name.
+You can register in-memory temporary tables under any catalog. Temporary tables exist only for the lifetime of the `SQLContext` instance and are automatically cleaned up when the context is dropped.
+
+The table name accepts flexible references, similar to DataFusion:
+- `"my_table"` — uses the current catalog and current database
+- `"schema.my_table"` — uses the current catalog with the specified schema
+- `"catalog.schema.my_table"` — fully qualified
 
 ```rust
 use datafusion::arrow::array::Int32Array;
@@ -76,21 +81,26 @@ let batch = RecordBatch::try_new(
     ],
 )?;
 
-ctx.register_temp_table("paimon", "temp", "users", schema, vec![batch])?;
-
-// Query via SQL
+// Fully qualified
+ctx.register_temp_table("paimon.temp.users", schema.clone(), vec![batch.clone()])?;
 let df = ctx.sql("SELECT * FROM paimon.temp.users WHERE id > 1").await?;
 df.show().await?;
 
+// Schema-qualified (uses current catalog)
+ctx.register_temp_table("temp.other_table", schema.clone(), vec![batch.clone()])?;
+
+// Bare table name (uses current catalog + current database)
+ctx.register_temp_table("quick_lookup", schema, vec![batch])?;
+
 // Optionally deregister early
-ctx.deregister_temp_table("paimon", "temp", "users")?;
+ctx.deregister_temp_table("paimon.temp.users")?;
 ```
 
 Multiple temporary tables can share the same schema — the schema is created automatically on first use:
 
 ```rust
-ctx.register_temp_table("paimon", "temp", "table_a", schema_a, vec![batch_a])?;
-ctx.register_temp_table("paimon", "temp", "table_b", schema_b, vec![batch_b])?;
+ctx.register_temp_table("temp.table_a", schema_a, vec![batch_a])?;
+ctx.register_temp_table("temp.table_b", schema_b, vec![batch_b])?;
 
 // Join two temp tables
 let df = ctx.sql("SELECT * FROM paimon.temp.table_a JOIN paimon.temp.table_b ON a.id = b.id").await?;

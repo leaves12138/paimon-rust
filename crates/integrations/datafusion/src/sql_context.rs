@@ -43,6 +43,7 @@ use datafusion::arrow::array::{
 use datafusion::arrow::compute::cast;
 use datafusion::arrow::datatypes::{DataType as ArrowDataType, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::common::TableReference;
 use datafusion::datasource::TableProvider;
 use datafusion::error::{DataFusionError, Result as DFResult};
 use datafusion::prelude::{DataFrame, SessionContext};
@@ -177,27 +178,34 @@ impl SQLContext {
         &self.ctx
     }
 
-    /// Registers a temporary in-memory table in the specified catalog and schema.
+    /// Registers a temporary in-memory table.
+    ///
+    /// The `name` parameter accepts flexible table references, similar to DataFusion:
+    /// - `"my_table"` — uses the current catalog and current database
+    /// - `"schema.my_table"` — uses the current catalog with the specified schema
+    /// - `"catalog.schema.my_table"` — fully qualified
     ///
     /// The table exists only for the lifetime of this SQLContext instance.
-    /// It can be queried via SQL using the fully qualified name: `catalog.schema.table`.
     ///
     /// # Example
     /// ```ignore
-    /// ctx.register_temp_table("my_catalog", "temp", "my_table", schema, batches)?;
-    /// let df = ctx.sql("SELECT * FROM my_catalog.temp.my_table").await?;
+    /// // Fully qualified
+    /// ctx.register_temp_table("paimon.temp.users", schema, batches)?;
+    /// // Schema-qualified (uses current catalog)
+    /// ctx.register_temp_table("temp.users", schema, batches)?;
+    /// // Bare (uses current catalog + __temp schema)
+    /// ctx.register_temp_table("quick_lookup", schema, batches)?;
     /// ```
     pub fn register_temp_table(
         &self,
-        catalog: &str,
-        schema: &str,
-        table_name: &str,
+        name: impl Into<TableReference>,
         schema_ref: Arc<Schema>,
         batches: Vec<RecordBatch>,
     ) -> DFResult<()> {
+        let (catalog, schema, table_name) = self.resolve_temp_table_name(name.into())?;
         let catalog_provider = self
             .ctx
-            .catalog(catalog)
+            .catalog(&catalog)
             .ok_or_else(|| DataFusionError::Plan(format!("Unknown catalog '{catalog}'")))?;
 
         let paimon_provider = catalog_provider
@@ -209,19 +217,20 @@ impl SQLContext {
                 ))
             })?;
 
-        paimon_provider.register_temp_table(schema, table_name, schema_ref, batches)
+        paimon_provider.register_temp_table(&schema, &table_name, schema_ref, batches)
     }
 
-    /// Deregisters a temporary table from the specified catalog and schema.
+    /// Deregisters a temporary table.
+    ///
+    /// Accepts the same flexible name format as `register_temp_table`.
     pub fn deregister_temp_table(
         &self,
-        catalog: &str,
-        schema: &str,
-        table_name: &str,
+        name: impl Into<TableReference>,
     ) -> DFResult<Option<Arc<dyn TableProvider>>> {
+        let (catalog, schema, table_name) = self.resolve_temp_table_name(name.into())?;
         let catalog_provider = self
             .ctx
-            .catalog(catalog)
+            .catalog(&catalog)
             .ok_or_else(|| DataFusionError::Plan(format!("Unknown catalog '{catalog}'")))?;
 
         let paimon_provider = catalog_provider
@@ -233,7 +242,31 @@ impl SQLContext {
                 ))
             })?;
 
-        paimon_provider.deregister_temp_table(schema, table_name)
+        paimon_provider.deregister_temp_table(&schema, &table_name)
+    }
+
+    /// Resolve a TableReference into (catalog, schema, table_name).
+    fn resolve_temp_table_name(&self, name: TableReference) -> DFResult<(String, String, String)> {
+        match name {
+            TableReference::Bare { table } => {
+                let catalog = self.current_catalog_name();
+                let schema = self
+                    .ctx
+                    .state()
+                    .config_options()
+                    .catalog
+                    .default_schema
+                    .clone();
+                Ok((catalog, schema, table.to_string()))
+            }
+            TableReference::Partial { schema, table } => {
+                let catalog = self.current_catalog_name();
+                Ok((catalog, schema.to_string(), table.to_string()))
+            }
+            TableReference::Full { catalog, schema, table } => {
+                Ok((catalog.to_string(), schema.to_string(), table.to_string()))
+            }
+        }
     }
 
     #[cfg(test)]

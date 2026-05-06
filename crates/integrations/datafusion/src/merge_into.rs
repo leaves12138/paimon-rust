@@ -60,24 +60,36 @@ fn next_cow_table_name(prefix: &str) -> String {
 /// Schema name used for internal temporary tables within a catalog.
 pub(crate) const TEMP_SCHEMA: &str = "__temp";
 
-/// Tracks registered temporary table names for cleanup.
-pub(crate) struct TempTableTracker {
+/// Tracks registered temporary table names and auto-cleans them up on drop.
+///
+/// This RAII guard ensures temp tables are always deregistered, even if the
+/// enclosing function panics or returns early with an error.
+pub(crate) struct TempTableTracker<'a> {
     tables: Vec<(String, String)>, // (schema, table_name)
+    catalog: String,
+    ctx: &'a SQLContext,
 }
 
-impl TempTableTracker {
-    pub(crate) fn new() -> Self {
-        Self { tables: Vec::new() }
+impl<'a> TempTableTracker<'a> {
+    pub(crate) fn new(catalog: &str, ctx: &'a SQLContext) -> Self {
+        Self {
+            tables: Vec::new(),
+            catalog: catalog.to_string(),
+            ctx,
+        }
     }
 
     pub(crate) fn register(&mut self, schema: &str, table_name: &str) {
         self.tables
             .push((schema.to_string(), table_name.to_string()));
     }
+}
 
-    pub(crate) fn deregister_all(&self, ctx: &SQLContext, catalog: &str) {
+impl Drop for TempTableTracker<'_> {
+    fn drop(&mut self) {
         for (schema, table) in &self.tables {
-            let _ = ctx.deregister_temp_table(catalog, schema, table);
+            let name = format!("{}.{}.{}", self.catalog, schema, table);
+            let _ = self.ctx.deregister_temp_table(&name);
         }
     }
 }
@@ -361,7 +373,7 @@ async fn execute_cow_merge_once(
     }
 
     // Read each target file individually, attach __paimon_file_idx and __paimon_row_offset
-    let mut temp_tracker = TempTableTracker::new();
+    let mut temp_tracker = TempTableTracker::new(catalog_name, ctx);
     let (has_target_data, cow_table_name) =
         register_cow_target_table(ctx, catalog_name, table, &writer, &mut temp_tracker).await?;
 
@@ -385,8 +397,6 @@ async fn execute_cow_merge_once(
         &mut temp_tracker,
     )
     .await;
-
-    temp_tracker.deregister_all(ctx, catalog_name);
 
     let (insert_messages, total_count) = result?;
 
@@ -427,7 +437,7 @@ async fn execute_cow_merge_inner(
     writer: &mut CopyOnWriteMergeWriter,
     table: &Table,
     merge_ctx: &CowMergeContext<'_>,
-    temp_tracker: &mut TempTableTracker,
+    temp_tracker: &mut TempTableTracker<'_>,
 ) -> DFResult<(Vec<paimon::table::CommitMessage>, u64)> {
     let source_ref = merge_ctx.source_ref;
     let s_alias = merge_ctx.s_alias;
@@ -725,7 +735,7 @@ async fn execute_merge_into_once(
             .iter()
             .map(|f| f.name().to_string())
             .collect();
-        let mut temp_tracker = TempTableTracker::new();
+        let mut temp_tracker = TempTableTracker::new(catalog_name, ctx);
         let insert_batches = build_insert_batches(
             ctx,
             catalog_name,
@@ -737,7 +747,6 @@ async fn execute_merge_into_once(
             &mut temp_tracker,
         )
         .await?;
-        temp_tracker.deregister_all(ctx, catalog_name);
         let insert_count: usize = insert_batches.iter().map(|b| b.num_rows()).sum();
         if insert_count > 0 {
             let mut table_write = table
@@ -845,7 +854,7 @@ async fn build_insert_batches(
     s_alias: &str,
     injected_columns: &[String],
     table_fields: &[String],
-    temp_tracker: &mut TempTableTracker,
+    temp_tracker: &mut TempTableTracker<'_>,
 ) -> DFResult<Vec<RecordBatch>> {
     if not_matched_batches.is_empty() || not_matched_batches.iter().all(|b| b.num_rows() == 0) {
         return Ok(Vec::new());
@@ -858,12 +867,11 @@ async fn build_insert_batches(
     let first_schema = source_batches[0].schema();
     let tmp_name = next_cow_table_name("__merge_not_matched");
 
-    let mut all_batches = Vec::new();
-    for batch in source_batches {
-        all_batches.push(batch);
-    }
-
-    ctx.register_temp_table(catalog_name, TEMP_SCHEMA, &tmp_name, first_schema, all_batches)?;
+    ctx.register_temp_table(
+        format!("{catalog_name}.{TEMP_SCHEMA}.{tmp_name}"),
+        first_schema,
+        source_batches,
+    )?;
     temp_tracker.register(TEMP_SCHEMA, &tmp_name);
     let qualified_tmp = format!("{catalog_name}.{TEMP_SCHEMA}.{tmp_name}");
 
@@ -1182,7 +1190,7 @@ pub(crate) async fn register_cow_target_table(
     catalog_name: &str,
     table: &Table,
     writer: &CopyOnWriteMergeWriter,
-    temp_tracker: &mut TempTableTracker,
+    temp_tracker: &mut TempTableTracker<'_>,
 ) -> DFResult<(bool, String)> {
     let file_index = writer.file_index();
     if file_index.is_empty() {
@@ -1286,7 +1294,11 @@ pub(crate) async fn register_cow_target_table(
 
     if has_data {
         let s = schema.unwrap();
-        ctx.register_temp_table(catalog_name, TEMP_SCHEMA, &table_name, s, all_batches)?;
+        ctx.register_temp_table(
+            format!("{catalog_name}.{TEMP_SCHEMA}.{table_name}"),
+            s,
+            all_batches,
+        )?;
         temp_tracker.register(TEMP_SCHEMA, &table_name);
     }
 
@@ -1463,7 +1475,6 @@ pub(crate) fn ok_result(ctx: &SessionContext, count: u64) -> DFResult<DataFrame>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datafusion::prelude::SessionContext;
     use datafusion::sql::sqlparser::dialect::GenericDialect;
     use datafusion::sql::sqlparser::parser::Parser;
     use paimon::catalog::{Catalog, Identifier};
@@ -1472,7 +1483,7 @@ mod tests {
     use paimon::{CatalogOptions, FileSystemCatalog, Options};
     use tempfile::TempDir;
 
-    use crate::{PaimonTableProvider, SQLContext};
+    use crate::SQLContext;
 
     async fn setup_sql_context() -> (TempDir, SQLContext, Arc<FileSystemCatalog>) {
         let temp_dir = TempDir::new().unwrap();

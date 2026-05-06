@@ -756,7 +756,7 @@ use datafusion::arrow::array::Int32Array;
 use datafusion::arrow::datatypes::{DataType as ArrowDataType, Field as ArrowField};
 
 #[tokio::test]
-async fn test_register_temp_table() {
+async fn test_register_temp_table_fully_qualified() {
     let (_tmp, catalog) = create_test_env();
     let ctx = create_sql_context(catalog.clone()).await;
 
@@ -771,7 +771,8 @@ async fn test_register_temp_table() {
     )
     .unwrap();
 
-    ctx.register_temp_table("paimon", "temp", "my_temp", schema, vec![batch])
+    // Fully qualified: catalog.schema.table
+    ctx.register_temp_table("paimon.temp.my_temp", schema, vec![batch])
         .unwrap();
 
     // Query the temp table via SQL
@@ -788,7 +789,7 @@ async fn test_register_temp_table() {
 }
 
 #[tokio::test]
-async fn test_register_temp_table_and_query_with_filter() {
+async fn test_register_temp_table_schema_qualified() {
     let (_tmp, catalog) = create_test_env();
     let ctx = create_sql_context(catalog.clone()).await;
 
@@ -810,7 +811,8 @@ async fn test_register_temp_table_and_query_with_filter() {
     )
     .unwrap();
 
-    ctx.register_temp_table("paimon", "temp", "users", schema, vec![batch])
+    // Schema-qualified: schema.table (uses current catalog)
+    ctx.register_temp_table("temp.users", schema, vec![batch])
         .unwrap();
 
     let batches = ctx
@@ -826,6 +828,43 @@ async fn test_register_temp_table_and_query_with_filter() {
 }
 
 #[tokio::test]
+async fn test_register_temp_table_bare() {
+    let (_tmp, catalog) = create_test_env();
+    let ctx = create_sql_context(catalog.clone()).await;
+
+    // Create a schema and set it as current database
+    ctx.sql("CREATE SCHEMA paimon.my_schema").await.unwrap();
+    ctx.set_current_database("my_schema").await.unwrap();
+
+    let schema = Arc::new(Schema::new(vec![ArrowField::new(
+        "id",
+        ArrowDataType::Int32,
+        false,
+    )]));
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![Arc::new(Int32Array::from(vec![1, 2, 3]))],
+    )
+    .unwrap();
+
+    // Bare: just table name (uses current catalog + current database)
+    ctx.register_temp_table("my_temp", schema, vec![batch])
+        .unwrap();
+
+    // Query via paimon.my_schema.my_temp
+    let batches = ctx
+        .sql("SELECT * FROM paimon.my_schema.my_temp")
+        .await
+        .unwrap()
+        .collect()
+        .await
+        .unwrap();
+
+    let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+    assert_eq!(total_rows, 3);
+}
+
+#[tokio::test]
 async fn test_register_temp_table_unknown_catalog() {
     let (_tmp, catalog) = create_test_env();
     let ctx = create_sql_context(catalog.clone()).await;
@@ -836,7 +875,7 @@ async fn test_register_temp_table_unknown_catalog() {
         false,
     )]));
 
-    let result = ctx.register_temp_table("nonexistent", "temp", "t", schema, vec![]);
+    let result = ctx.register_temp_table("nonexistent.temp.t", schema, vec![]);
     assert!(result.is_err());
     let err_msg = result.unwrap_err().to_string();
     assert!(err_msg.contains("Unknown catalog"));
@@ -858,11 +897,11 @@ async fn test_deregister_temp_table() {
     )
     .unwrap();
 
-    ctx.register_temp_table("paimon", "temp", "my_temp", schema.clone(), vec![batch])
+    ctx.register_temp_table("paimon.temp.my_temp", schema.clone(), vec![batch])
         .unwrap();
 
-    // Deregister
-    ctx.deregister_temp_table("paimon", "temp", "my_temp")
+    // Deregister with flexible name
+    ctx.deregister_temp_table("paimon.temp.my_temp")
         .unwrap();
 
     // Query should fail
@@ -897,9 +936,9 @@ async fn test_multiple_temp_tables_in_same_schema() {
     )
     .unwrap();
 
-    ctx.register_temp_table("paimon", "temp", "t1", schema1, vec![batch1])
+    ctx.register_temp_table("temp.t1", schema1, vec![batch1])
         .unwrap();
-    ctx.register_temp_table("paimon", "temp", "t2", schema2, vec![batch2])
+    ctx.register_temp_table("temp.t2", schema2, vec![batch2])
         .unwrap();
 
     // Both should be queryable

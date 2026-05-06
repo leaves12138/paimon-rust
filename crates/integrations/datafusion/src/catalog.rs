@@ -108,7 +108,8 @@ impl CatalogProvider for PaimonCatalogProvider {
 
     fn schema(&self, name: &str) -> Option<Arc<dyn SchemaProvider>> {
         // First check temp_schemas
-        if let Some(schema) = self.temp_schemas.read().unwrap().get(name) {
+        let schemas = self.temp_schemas.read().unwrap_or_else(|e| e.into_inner());
+        if let Some(schema) = schemas.get(name) {
             return Some(Arc::clone(schema) as Arc<dyn SchemaProvider>);
         }
 
@@ -186,7 +187,7 @@ impl CatalogProvider for PaimonCatalogProvider {
 impl PaimonCatalogProvider {
     /// Creates or returns an existing temporary in-memory schema under this catalog.
     fn get_or_create_temp_schema(&self, name: &str) -> Arc<MemorySchemaProvider> {
-        let mut schemas = self.temp_schemas.write().unwrap();
+        let mut schemas = self.temp_schemas.write().unwrap_or_else(|e| e.into_inner());
         schemas
             .entry(name.to_string())
             .or_insert_with(|| Arc::new(MemorySchemaProvider::new()))
@@ -215,7 +216,7 @@ impl PaimonCatalogProvider {
         schema: &str,
         table_name: &str,
     ) -> DFResult<Option<Arc<dyn TableProvider>>> {
-        let schemas = self.temp_schemas.read().unwrap();
+        let schemas = self.temp_schemas.read().unwrap_or_else(|e| e.into_inner());
         let mem_schema = schemas
             .get(schema)
             .ok_or_else(|| plan_datafusion_err!("Unknown temp schema '{schema}'"))?;
@@ -224,7 +225,7 @@ impl PaimonCatalogProvider {
 
     /// Returns whether a temp schema exists with the given name.
     pub fn has_temp_schema(&self, name: &str) -> bool {
-        self.temp_schemas.read().unwrap().contains_key(name)
+        self.temp_schemas.read().unwrap_or_else(|e| e.into_inner()).contains_key(name)
     }
 }
 

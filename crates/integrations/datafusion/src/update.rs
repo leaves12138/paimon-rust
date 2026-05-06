@@ -194,10 +194,9 @@ async fn execute_cow_update_once(
         .await
         .map_err(to_datafusion_error)?;
 
-    let mut temp_tracker = TempTableTracker::new();
+    let mut temp_tracker = TempTableTracker::new(catalog_name, ctx);
     let (has_data, cow_table_name) = register_cow_target_table(ctx, catalog_name, table, &writer, &mut temp_tracker).await?;
     if !has_data {
-        temp_tracker.deregister_all(ctx, catalog_name);
         return ok_result(ctx.ctx(), 0);
     }
 
@@ -211,7 +210,6 @@ async fn execute_cow_update_once(
         &mut writer,
     )
     .await;
-    temp_tracker.deregister_all(ctx, catalog_name);
     let total_count = result?;
 
     let messages = writer.prepare_commit().await.map_err(to_datafusion_error)?;
