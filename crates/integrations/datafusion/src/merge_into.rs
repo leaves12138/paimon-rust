@@ -1529,7 +1529,7 @@ mod tests {
 
         // Execute MERGE INTO
         let merge = parse_merge(
-            "MERGE INTO paimon.test_db.target t USING paimon.test_db.source s ON t.id = s.id \
+            "MERGE INTO paimon.test_db.t_merge t USING paimon.test_db.source s ON t.id = s.id \
              WHEN MATCHED THEN UPDATE SET name = s.name",
         );
         execute_merge_into(&sql_context, &merge, table)
@@ -1537,7 +1537,7 @@ mod tests {
             .unwrap();
 
         let batches = sql_context
-            .sql("SELECT id, name, value FROM paimon.test_db.target ORDER BY id")
+            .sql("SELECT id, name, value FROM paimon.test_db.t_merge ORDER BY id")
             .await
             .unwrap()
             .collect()
@@ -1589,7 +1589,7 @@ mod tests {
             .unwrap();
 
         let merge = parse_merge(
-            "MERGE INTO paimon.test_db.t_cow_upd t USING paimon.test_db.source s ON t.id = s.id \
+            "MERGE INTO paimon.test_db.t_merge2 t USING paimon.test_db.source s ON t.id = s.id \
              WHEN MATCHED THEN UPDATE SET name = s.name",
         );
         let result = execute_merge_into(&sql_context, &merge, table)
@@ -1756,7 +1756,7 @@ mod tests {
             .await
             .unwrap();
         sql_context
-            .sql("INSERT INTO paimon.test_db.source (id INT) VALUES ((2))")
+            .sql("INSERT INTO paimon.test_db.source (id) VALUES (2)")
             .await
             .unwrap()
             .collect()
@@ -1764,7 +1764,7 @@ mod tests {
             .unwrap();
 
         let merge = parse_merge(
-            "MERGE INTO paimon.test_db.t_cow_upd t USING paimon.test_db.source s ON t.id = s.id \
+            "MERGE INTO paimon.test_db.t_cow_del t USING paimon.test_db.source s ON t.id = s.id \
              WHEN MATCHED THEN DELETE",
         );
         execute_merge_into(&sql_context, &merge, table)
@@ -1772,7 +1772,7 @@ mod tests {
             .unwrap();
 
         let batches = sql_context
-            .sql("SELECT id, name, value FROM paimon.test_db.t_cow_upd ORDER BY id")
+            .sql("SELECT id, name, value FROM paimon.test_db.t_cow_del ORDER BY id")
             .await
             .unwrap()
             .collect()
@@ -1794,10 +1794,16 @@ mod tests {
             .sql("CREATE TABLE paimon.test_db.source (id INT, name VARCHAR, value INT)")
             .await
             .unwrap();
-        sql_context.sql("INSERT INTO paimon.test_db.source (id INT, name VARCHAR, value INT) VALUES ((4, 'dave', 40), (5, 'eve', 50))").await.unwrap().collect().await.unwrap();
+        sql_context
+            .sql("INSERT INTO paimon.test_db.source VALUES (4, 'dave', 40), (5, 'eve', 50)")
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
 
         let merge = parse_merge(
-            "MERGE INTO paimon.test_db.t_cow_upd t USING paimon.test_db.source s ON t.id = s.id \
+            "MERGE INTO paimon.test_db.t_cow_ins t USING paimon.test_db.source s ON t.id = s.id \
              WHEN NOT MATCHED THEN INSERT (id, name, value) VALUES (s.id, s.name, s.value)",
         );
         execute_merge_into(&sql_context, &merge, table)
@@ -1805,7 +1811,7 @@ mod tests {
             .unwrap();
 
         let batches = sql_context
-            .sql("SELECT id, name, value FROM paimon.test_db.t_cow_upd ORDER BY id")
+            .sql("SELECT id, name, value FROM paimon.test_db.t_cow_ins ORDER BY id")
             .await
             .unwrap()
             .collect()
@@ -1833,10 +1839,16 @@ mod tests {
             .sql("CREATE TABLE paimon.test_db.source (id INT, name VARCHAR, value INT)")
             .await
             .unwrap();
-        sql_context.sql("INSERT INTO paimon.test_db.source (id INT, name VARCHAR, value INT) VALUES ((2, 'BOB', 200), (4, 'dave', 40))").await.unwrap().collect().await.unwrap();
+        sql_context
+            .sql("INSERT INTO paimon.test_db.source VALUES (2, 'BOB', 200), (4, 'dave', 40)")
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
 
         let merge = parse_merge(
-            "MERGE INTO paimon.test_db.t_cow_upd t USING paimon.test_db.source s ON t.id = s.id \
+            "MERGE INTO paimon.test_db.t_cow_upsert t USING paimon.test_db.source s ON t.id = s.id \
              WHEN MATCHED THEN UPDATE SET name = s.name, value = s.value \
              WHEN NOT MATCHED THEN INSERT (id, name, value) VALUES (s.id, s.name, s.value)",
         );
@@ -1845,7 +1857,7 @@ mod tests {
             .unwrap();
 
         let batches = sql_context
-            .sql("SELECT id, name, value FROM paimon.test_db.t_cow_upd ORDER BY id")
+            .sql("SELECT id, name, value FROM paimon.test_db.t_cow_upsert ORDER BY id")
             .await
             .unwrap()
             .collect()
@@ -1877,7 +1889,7 @@ mod tests {
             .unwrap();
 
         let merge = parse_merge(
-            "MERGE INTO paimon.test_db.t_cow_upd t USING paimon.test_db.source s ON t.id = s.id \
+            "MERGE INTO paimon.test_db.t_cow_nomatch t USING paimon.test_db.source s ON t.id = s.id \
              WHEN MATCHED THEN UPDATE SET name = s.name",
         );
         let result = execute_merge_into(&sql_context, &merge, table)
