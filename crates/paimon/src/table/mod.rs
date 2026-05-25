@@ -46,6 +46,7 @@ mod read_builder;
 pub mod referenced_files;
 pub(crate) mod rest_env;
 pub(crate) mod row_id_predicate;
+mod row_id_reassign;
 pub(crate) mod schema_manager;
 pub(crate) mod snapshot_commit;
 mod snapshot_manager;
@@ -73,6 +74,7 @@ pub use full_text_search_builder::FullTextSearchBuilder;
 use futures::stream::BoxStream;
 pub use read_builder::ReadBuilder;
 pub use rest_env::RESTEnv;
+pub use row_id_reassign::{DataEvolutionRowIdReassigner, ReassignRowIdResult};
 pub use schema_manager::SchemaManager;
 pub use snapshot_commit::{RESTSnapshotCommit, RenamingSnapshotCommit, SnapshotCommit};
 pub use snapshot_manager::SnapshotManager;
@@ -187,6 +189,23 @@ impl Table {
     /// Reference: [pypaimon FileStoreTable.new_write_builder](https://github.com/apache/paimon/blob/master/paimon-python/pypaimon/table/file_store_table.py).
     pub fn new_write_builder(&self) -> WriteBuilder<'_> {
         WriteBuilder::new(self)
+    }
+
+    /// Reassign row IDs for data-evolution tables by rewriting metadata only.
+    pub async fn reassign_row_ids(&self) -> Result<ReassignRowIdResult> {
+        DataEvolutionRowIdReassigner::new(self.clone())
+            .reassign()
+            .await
+    }
+
+    /// Reassign row IDs for data-evolution tables with a custom commit user.
+    pub async fn reassign_row_ids_with_commit_user(
+        &self,
+        commit_user: impl Into<String>,
+    ) -> Result<ReassignRowIdResult> {
+        DataEvolutionRowIdReassigner::new(self.clone())
+            .reassign_with_commit_user(commit_user)
+            .await
     }
 
     /// Create a copy of this table with extra options merged into the schema.
