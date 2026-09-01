@@ -24,7 +24,6 @@ if(TARGET Paimon::cpp)
         "Paimon::cpp exists without its bundled Paimon::c target")
     return()
   endif()
-  include("${CMAKE_CURRENT_LIST_DIR}/PaimonNoRuntimePlugin.cmake")
   check_required_components(PaimonCpp)
   return()
 endif()
@@ -54,5 +53,4 @@ set_target_properties(
     INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_INCLUDEDIR@")
 
 include("${CMAKE_CURRENT_LIST_DIR}/PaimonCppTargets.cmake")
-include("${CMAKE_CURRENT_LIST_DIR}/PaimonNoRuntimePlugin.cmake")
 check_required_components(PaimonCpp)

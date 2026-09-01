@@ -107,77 +107,20 @@ are deliberately unsupported.
 When changing the C ABI, regenerate the checked header separately with
 `cbindgen`; ordinary builds consume the checked-in `bindings/c/include/paimon.h`.
 
-For a shared plugin that must load without `libstdc++` or `libc++`, compile the
-C++ source without exceptions/RTTI and use the C linker driver for the final
-link:
-
-```bash
-c++ -std=c++17 -fPIC -fno-exceptions -fno-rtti \
-  -Ibindings/cpp/include -Ibindings/c/include \
-  -c plugin.cpp -o plugin.o
-cc -shared plugin.o -Ltarget/release -lpaimon_c -Wl,-z,defs \
-  -o libplugin.so
-bindings/cpp/scripts/verify_linux_elf.sh libplugin.so
-```
-
-The plugin must expose each public entry point with
-`PAIMON_CPP_PLUGIN_EXPORT` and stay within the facade's allocation-free,
-no-exceptions subset. Linking the final `.so` with a C++ driver can add a C++
-runtime even when the source does not call that runtime directly.
-
-Install its CMake interface target:
+Install the CMake interface target elsewhere when needed:
 
 ```bash
 cmake --install target/cpp-build --prefix /your/prefix
 ```
 
-Installation always bundles the just-built `libpaimon_c` and exports imported
-target `Paimon::c`. Installed consumers can build a verified no-runtime plugin
-with the provided helper:
+Installation always bundles the just-built `libpaimon_c` and exports
+`Paimon::c` plus the header-only `Paimon::cpp` target. A consumer only needs:
 
 ```cmake
-cmake_minimum_required(VERSION 3.15)
-project(MyPaimonPlugin LANGUAGES C CXX)
 find_package(PaimonCpp CONFIG REQUIRED)
-paimon_add_no_runtime_plugin(
-  my_paimon_plugin
-  SOURCES plugin.cpp
-  INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/include"
-  COMPILE_DEFINITIONS MY_PLUGIN_ABI=1)
+add_executable(my_paimon_app main.cpp)
+target_link_libraries(my_paimon_app PRIVATE Paimon::cpp)
 ```
-
-Configure C++ compilation through the helper's `SOURCES`,
-`INCLUDE_DIRECTORIES`, `COMPILE_DEFINITIONS`, `COMPILE_OPTIONS`, and
-`LINK_LIBRARIES` arguments. Do not add C++ sources to the returned C-link
-target with `target_sources`; doing so bypasses the split compile/link model.
-The helper hides all non-exported C++ symbols, links with the C driver, embeds
-only `$ORIGIN` as its runtime search path, and runs the installed ELF guard
-after every successful link.
-
-`Paimon::cpp` remains the header-only facade target for consumers that manage
-their own final link. The installed package always resolves `Paimon::c` to the
-library bundled in the same installation prefix.
-
-## Linux runtime guard
-
-Run the ELF guard on the library staged by CMake when validating a Linux
-release artifact:
-
-```bash
-bindings/cpp/scripts/verify_linux_elf.sh \
-  target/cpp-build/lib/libpaimon_c.so
-```
-
-Some distributions use `lib64` instead of `lib`. The build host determines the
-minimum glibc version; build on glibc 2.17 when 2.17 is the deployment baseline.
-
-It prints the build host's `ldd --version` and applies a `DT_NEEDED` allowlist
-containing glibc components, `libgcc_s`, and `libpaimon_c`. It rejects C++
-runtimes, `libunwind`, `libatomic`, `GLIBCXX`/`CXXABI` symbol versions,
-undefined or exported C++ mangled symbols, unversioned host hooks, operator
-new/delete, RTTI/dynamic-cast support, absolute runtime paths, and private
-glibc ABI versions. Glibc's C-level `__cxa_atexit`, `__cxa_finalize`, and
-`__cxa_thread_atexit_impl` remain allowed.
 
 `Scan::plan()` remains a bounded scan. Use `StreamScanOptions` and
 `ReadBuilder::new_stream_scan` for a stateful continuous scan. Persist

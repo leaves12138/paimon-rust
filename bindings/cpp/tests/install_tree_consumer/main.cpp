@@ -17,7 +17,10 @@
 
 #include <paimon/paimon.hpp>
 
-PAIMON_CPP_PLUGIN_EXPORT std::uint32_t
-paimon_install_tree_consumer_abi() noexcept {
-  return paimon::abi_version();
+int main() {
+  const auto abi = paimon::abi_version();
+  auto version = paimon::library_version();
+  (void)abi;
+  (void)version;
+  return 0;
 }

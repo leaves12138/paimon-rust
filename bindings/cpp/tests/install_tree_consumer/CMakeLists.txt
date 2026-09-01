@@ -16,20 +16,12 @@
 # under the License.
 
 cmake_minimum_required(VERSION 3.15)
-project(PaimonCppInstallTreeConsumer LANGUAGES C CXX)
+project(PaimonCppInstallTreeConsumer LANGUAGES CXX)
 
 find_package(PaimonCpp CONFIG REQUIRED)
 # Package discovery may happen through more than one dependency. A repeated
 # lookup must retain the same bundled Paimon::c target instead of treating it
 # as an external override.
 find_package(PaimonCpp CONFIG REQUIRED)
-paimon_add_no_runtime_plugin(
-  paimon_install_tree_consumer
-  SOURCES plugin.cpp)
-
-option(PAIMON_INJECT_FORBIDDEN_RUNTIME "Test the installed ELF guard" OFF)
-if(PAIMON_INJECT_FORBIDDEN_RUNTIME)
-  target_link_options(
-    paimon_install_tree_consumer PRIVATE -Wl,--no-as-needed)
-  target_link_libraries(paimon_install_tree_consumer PRIVATE stdc++)
-endif()
+add_executable(paimon_install_tree_consumer main.cpp)
+target_link_libraries(paimon_install_tree_consumer PRIVATE Paimon::cpp)

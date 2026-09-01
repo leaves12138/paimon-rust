@@ -16,7 +16,7 @@
 # under the License.
 
 cmake_minimum_required(VERSION 3.15)
-project(PaimonCpp VERSION 0.1.0 LANGUAGES C CXX)
+project(PaimonCpp VERSION 0.1.0 LANGUAGES CXX)
 
 include(CMakePackageConfigHelpers)
 include(GNUInstallDirs)
@@ -113,8 +113,6 @@ target_include_directories(
 
 target_link_libraries(paimon_cpp INTERFACE Paimon::c)
 
-include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/PaimonNoRuntimePlugin.cmake")
-
 if(PAIMON_CPP_BUILD_EXAMPLES)
   add_executable(paimon_cpp_batch_read examples/batch_read.cpp)
   target_link_libraries(paimon_cpp_batch_read PRIVATE Paimon::cpp)
@@ -132,203 +130,23 @@ if(PAIMON_CPP_BUILD_TESTS)
     PRIVATE PAIMON_C_HEADER="paimon_test_stub.h")
   target_include_directories(
     paimon_cpp_header_smoke PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
-  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-    target_compile_options(
-      paimon_cpp_header_smoke
-      PRIVATE
-        -fno-exceptions
-        -fno-rtti
-        -fvisibility=hidden
-        -fvisibility-inlines-hidden)
-  endif()
   target_link_libraries(paimon_cpp_header_smoke PRIVATE Paimon::cpp)
   add_test(
     NAME paimon_cpp_header_compile_smoke
     COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}
             --target paimon_cpp_header_smoke)
 
-  if(UNIX AND NOT APPLE)
-    # Compile as C++, but deliberately invoke the C linker driver. This proves
-    # the facade itself needs no libstdc++/libc++ symbols while resolving every
-    # wrapped function against the real libpaimon_c artifact.
-    set(paimon_cpp_smoke_object
-        "${CMAKE_CURRENT_BINARY_DIR}/paimon_cpp_real_link_smoke.o")
-    set(paimon_cpp_smoke_library
-        "${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_SHARED_LIBRARY_PREFIX}paimon_cpp_real_link_smoke${CMAKE_SHARED_LIBRARY_SUFFIX}")
-    get_filename_component(
-      paimon_c_library_dir "${paimon_c_library}" DIRECTORY)
-    add_custom_command(
-      OUTPUT "${paimon_cpp_smoke_object}"
-      COMMAND
-        "${CMAKE_CXX_COMPILER}" -std=c++17 -fPIC -fno-exceptions -fno-rtti
-        -fvisibility=hidden -fvisibility-inlines-hidden
-        "-I${CMAKE_CURRENT_SOURCE_DIR}/include"
-        "-I${paimon_c_include_dir}"
-        -c "${CMAKE_CURRENT_SOURCE_DIR}/tests/header_smoke.cpp"
-        -o "${paimon_cpp_smoke_object}"
-      DEPENDS
-        tests/header_smoke.cpp
-        include/paimon/paimon.hpp
-        "${paimon_c_include_dir}/paimon.h"
-      VERBATIM)
-    add_custom_command(
-      OUTPUT "${paimon_cpp_smoke_library}"
-      COMMAND
-        "${CMAKE_C_COMPILER}" -shared
-        "${paimon_cpp_smoke_object}"
-        "-L${paimon_c_library_dir}" -lpaimon_c -Wl,-z,defs
-        -o "${paimon_cpp_smoke_library}"
-      DEPENDS "${paimon_cpp_smoke_object}" "${paimon_c_library}"
-      VERBATIM)
-    add_custom_target(
-      paimon_cpp_real_link_smoke ALL DEPENDS "${paimon_cpp_smoke_library}")
-
-    # The helper always compiles with the configured CXX compiler and links the
-    # resulting object with the configured C compiler. This remains correct when
-    # those drivers are different versions, as on an older deployment host.
-    paimon_add_no_runtime_plugin(
-      paimon_cpp_no_runtime_plugin
-      SOURCES tests/no_cpp_runtime_plugin.cpp
-      INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/tests/helper_config"
-      COMPILE_DEFINITIONS PAIMON_CPP_HELPER_COMPILE_DEFINITION=73)
-
-    configure_file(
-      tests/relink_probe.cpp
-      "${CMAKE_CURRENT_BINARY_DIR}/relink_probe.cpp"
-      COPYONLY)
-    paimon_add_no_runtime_plugin(
-      paimon_cpp_relink_probe
-      SOURCES "${CMAKE_CURRENT_BINARY_DIR}/relink_probe.cpp")
-
-    add_executable(paimon_cpp_dlopen_smoke tests/dlopen_smoke.c)
-    target_link_libraries(paimon_cpp_dlopen_smoke PRIVATE ${CMAKE_DL_LIBS})
-
-    add_test(
-      NAME paimon_c_no_cpp_runtime
-      COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/scripts/verify_linux_elf.sh"
-              "${paimon_c_library}")
-    add_test(
-      NAME paimon_cpp_facade_no_cpp_runtime
-      COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/scripts/verify_linux_elf.sh"
-              "${paimon_cpp_smoke_library}")
-    add_test(
-      NAME paimon_cpp_plugin_no_cpp_runtime
-      COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/scripts/verify_linux_elf.sh"
-              "$<TARGET_FILE:paimon_cpp_no_runtime_plugin>")
-
-    add_library(
-      paimon_elf_fixture_undefined_operator_new SHARED
-      tests/elf_fixtures/undefined_operator_new.c)
-    add_test(
-      NAME paimon_elf_guard_rejects_operator_new
-      COMMAND
-        "${CMAKE_COMMAND}"
-        "-DVERIFIER=${CMAKE_CURRENT_SOURCE_DIR}/scripts/verify_linux_elf.sh"
-        "-DLIBRARY=$<TARGET_FILE:paimon_elf_fixture_undefined_operator_new>"
-        "-DEXPECTED=C++ mangled"
-        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_elf_rejected.cmake")
-
-    add_library(
-      paimon_elf_fixture_undefined_host_hook SHARED
-      tests/elf_fixtures/undefined_host_hook.c)
-    add_test(
-      NAME paimon_elf_guard_rejects_host_hook
-      COMMAND
-        "${CMAKE_COMMAND}"
-        "-DVERIFIER=${CMAKE_CURRENT_SOURCE_DIR}/scripts/verify_linux_elf.sh"
-        "-DLIBRARY=$<TARGET_FILE:paimon_elf_fixture_undefined_host_hook>"
-        "-DEXPECTED=unversioned undefined symbol"
-        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_elf_rejected.cmake")
-
-    add_library(
-      paimon_elf_fixture_executable_stack SHARED
-      tests/elf_fixtures/executable_stack.c)
-    target_link_options(
-      paimon_elf_fixture_executable_stack PRIVATE -Wl,-z,execstack)
-    add_test(
-      NAME paimon_elf_guard_rejects_executable_stack
-      COMMAND
-        "${CMAKE_COMMAND}"
-        "-DVERIFIER=${CMAKE_CURRENT_SOURCE_DIR}/scripts/verify_linux_elf.sh"
-        "-DLIBRARY=$<TARGET_FILE:paimon_elf_fixture_executable_stack>"
-        "-DEXPECTED=executable GNU_STACK"
-        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_elf_rejected.cmake")
-
-    add_executable(
-      paimon_elf_fixture_pie
-      tests/elf_fixtures/pie_executable.c)
-    target_compile_options(paimon_elf_fixture_pie PRIVATE -fPIE)
-    target_link_options(paimon_elf_fixture_pie PRIVATE -pie)
-    add_test(
-      NAME paimon_elf_guard_rejects_pie_executable
-      COMMAND
-        "${CMAKE_COMMAND}"
-        "-DVERIFIER=${CMAKE_CURRENT_SOURCE_DIR}/scripts/verify_linux_elf.sh"
-        "-DLIBRARY=$<TARGET_FILE:paimon_elf_fixture_pie>"
-        "-DEXPECTED=PIE executable"
-        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_elf_rejected.cmake")
-
-    add_test(
-      NAME paimon_cpp_plugin_incremental_relink
-      COMMAND
-        "${CMAKE_COMMAND}"
-        "-DBUILD_DIR=${CMAKE_BINARY_DIR}"
-        "-DSOURCE=${CMAKE_CURRENT_BINARY_DIR}/relink_probe.cpp"
-        "-DLIBRARY=$<TARGET_FILE:paimon_cpp_relink_probe>"
-        "-DTARGET=paimon_cpp_relink_probe"
-        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_incremental_relink.cmake")
-
-    add_test(
-      NAME paimon_cpp_plugin_isolated_load
-      COMMAND
-        "${CMAKE_COMMAND}"
-        "-DLOADER=$<TARGET_FILE:paimon_cpp_dlopen_smoke>"
-        "-DPLUGIN=$<TARGET_FILE:paimon_cpp_no_runtime_plugin>"
-        "-DPAIMON_C_LIBRARY_UNDER_TEST=${paimon_c_library}"
-        "-DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/isolated-load-test"
-        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/run_isolated_load.cmake")
-
-    if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
-      add_library(
-        paimon_elf_fixture_libgcc SHARED
-        tests/elf_fixtures/needs_libgcc.c)
-      target_link_options(
-        paimon_elf_fixture_libgcc PRIVATE -Wl,--no-as-needed)
-      target_link_libraries(paimon_elf_fixture_libgcc PRIVATE gcc_s)
-      add_test(
-        NAME paimon_elf_guard_allows_libgcc
-        COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/scripts/verify_linux_elf.sh"
-                "$<TARGET_FILE:paimon_elf_fixture_libgcc>")
-    endif()
-
-    set(paimon_cpp_install_test_root
-        "${CMAKE_CURRENT_BINARY_DIR}/install-tree-consumer-test")
-    add_test(
-      NAME paimon_cpp_install_tree_consumer
-      COMMAND
-        "${CMAKE_COMMAND}"
-        "-DMAIN_BUILD_DIR=${CMAKE_BINARY_DIR}"
-        "-DCONSUMER_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/tests/install_tree_consumer"
-        "-DTEST_ROOT=${paimon_cpp_install_test_root}"
-        "-DC_COMPILER=${CMAKE_C_COMPILER}"
-        "-DCXX_COMPILER=${CMAKE_CXX_COMPILER}"
-        "-DPLUGIN_FILENAME=${CMAKE_SHARED_LIBRARY_PREFIX}paimon_install_tree_consumer${CMAKE_SHARED_LIBRARY_SUFFIX}"
-        "-DVERIFIER=${CMAKE_CURRENT_SOURCE_DIR}/scripts/verify_linux_elf.sh"
-        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/run_install_tree_consumer.cmake")
-    add_test(
-      NAME paimon_cpp_install_tree_guard_rejects_runtime
-      COMMAND
-        "${CMAKE_COMMAND}"
-        "-DMAIN_BUILD_DIR=${CMAKE_BINARY_DIR}"
-        "-DCONSUMER_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/tests/install_tree_consumer"
-        "-DTEST_ROOT=${paimon_cpp_install_test_root}-forbidden"
-        "-DC_COMPILER=${CMAKE_C_COMPILER}"
-        "-DCXX_COMPILER=${CMAKE_CXX_COMPILER}"
-        "-DPLUGIN_FILENAME=${CMAKE_SHARED_LIBRARY_PREFIX}paimon_install_tree_consumer${CMAKE_SHARED_LIBRARY_SUFFIX}"
-        "-DVERIFIER=${CMAKE_CURRENT_SOURCE_DIR}/scripts/verify_linux_elf.sh"
-        -DEXPECT_BUILD_FAILURE=ON
-        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/run_install_tree_consumer.cmake")
-  endif()
+  set(paimon_cpp_install_test_root
+      "${CMAKE_CURRENT_BINARY_DIR}/install-tree-consumer-test")
+  add_test(
+    NAME paimon_cpp_install_tree_consumer
+    COMMAND
+      "${CMAKE_COMMAND}"
+      "-DMAIN_BUILD_DIR=${CMAKE_BINARY_DIR}"
+      "-DCONSUMER_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/tests/install_tree_consumer"
+      "-DTEST_ROOT=${paimon_cpp_install_test_root}"
+      "-DCXX_COMPILER=${CMAKE_CXX_COMPILER}"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/run_install_tree_consumer.cmake")
 endif()
 
 set(paimon_cpp_install_component PaimonCppSdk)
@@ -390,11 +208,6 @@ install(
   FILES
     "${CMAKE_CURRENT_BINARY_DIR}/PaimonCppConfig.cmake"
     "${CMAKE_CURRENT_BINARY_DIR}/PaimonCppConfigVersion.cmake"
-    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/PaimonNoRuntimePlugin.cmake"
-  DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/PaimonCpp"
-  COMPONENT ${paimon_cpp_install_component})
-install(
-  PROGRAMS "${CMAKE_CURRENT_SOURCE_DIR}/scripts/verify_linux_elf.sh"
   DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/PaimonCpp"
   COMPONENT ${paimon_cpp_install_component})
 

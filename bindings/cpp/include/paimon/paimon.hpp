@@ -39,18 +39,6 @@ extern "C" {
 #include PAIMON_C_HEADER
 }
 
-// Mark the deliberately small C ABI exported by a no-runtime plugin. The
-// CMake helper hides every other C++ symbol so inline facade implementation
-// details cannot leak into the plugin's dynamic ABI.
-#if defined(_WIN32)
-#define PAIMON_CPP_PLUGIN_EXPORT extern "C" __declspec(dllexport)
-#elif defined(__GNUC__) || defined(__clang__)
-#define PAIMON_CPP_PLUGIN_EXPORT \
-  extern "C" __attribute__((visibility("default")))
-#else
-#define PAIMON_CPP_PLUGIN_EXPORT extern "C"
-#endif
-
 namespace paimon {
 
 struct adopt_handle_t {
