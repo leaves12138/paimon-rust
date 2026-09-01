@@ -18,19 +18,32 @@ set -eu
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repository_root=$(CDPATH= cd -- "${script_dir}/../../.." && pwd)
+elf_verifier="${repository_root}/bindings/cpp/scripts/verify_linux_elf.sh"
 
-case "$(uname -m)" in
-  x86_64|amd64)
-    rust_target=x86_64-unknown-linux-gnu
-    ;;
-  aarch64|arm64)
-    rust_target=aarch64-unknown-linux-gnu
-    ;;
-  *)
-    echo "unsupported Linux architecture: $(uname -m)" >&2
-    exit 2
-    ;;
-esac
+if [ -n "${PAIMON_LINUX_RUST_TARGET:-}" ]; then
+  case "${PAIMON_LINUX_RUST_TARGET}" in
+    x86_64-unknown-linux-gnu|aarch64-unknown-linux-gnu)
+      rust_target=${PAIMON_LINUX_RUST_TARGET}
+      ;;
+    *)
+      echo "unsupported Linux Rust target: ${PAIMON_LINUX_RUST_TARGET}" >&2
+      exit 2
+      ;;
+  esac
+else
+  case "$(uname -m)" in
+    x86_64|amd64)
+      rust_target=x86_64-unknown-linux-gnu
+      ;;
+    aarch64|arm64)
+      rust_target=aarch64-unknown-linux-gnu
+      ;;
+    *)
+      echo "unsupported Linux architecture: $(uname -m)" >&2
+      exit 2
+      ;;
+  esac
+fi
 
 if ! command -v cargo-zigbuild >/dev/null 2>&1; then
   echo "cargo-zigbuild is required to build the glibc 2.17 artifact" >&2
@@ -47,5 +60,5 @@ case "${target_dir}" in
   *) target_dir="${repository_root}/${target_dir}" ;;
 esac
 library="${target_dir}/${rust_target}/release/libpaimon_c.so"
-"${script_dir}/verify_linux_elf.sh" "${library}"
+"${elf_verifier}" "${library}"
 printf 'validated-library=%s\n' "${library}"

@@ -73,13 +73,24 @@ auto dropped = catalog.drop_table(
 
 ## Build
 
-Generate the C header and build the Rust library first:
+Configure and build the C++ facade directly. The build always compiles the
+in-tree `bindings/c` crate first, so the C and C++ layers come from the same
+source revision:
 
 ```bash
-cargo build --release -p paimon-c
-cbindgen --config bindings/c/cbindgen.toml bindings/c \
-  --output bindings/c/include/paimon.h
+cmake -S bindings/cpp -B target/cpp-build \
+  -DPAIMON_CPP_BUILD_EXAMPLES=ON
+cmake --build target/cpp-build
 ```
+
+macOS and Windows use Cargo's release profile. Linux uses
+`bindings/c/scripts/build_linux_release.sh`, which requires Zig and
+`cargo-zigbuild`, targets glibc 2.17, and rejects non-C runtime dependencies.
+External prebuilt paimon-c libraries and parent-provided `Paimon::c` targets are
+deliberately unsupported.
+
+When changing the C ABI, regenerate the checked header separately with
+`cbindgen`; ordinary builds consume the checked-in `bindings/c/include/paimon.h`.
 
 For a shared plugin that must load without `libstdc++`, `libc++`, or
 `libgcc_s`, compile the C++ source without exceptions/RTTI and use the C linker
@@ -99,19 +110,15 @@ The plugin must expose each public entry point with
 no-exceptions subset. Linking the final `.so` with a C++ driver can add a C++
 runtime even when the source does not call that runtime directly.
 
-Or install its CMake interface target:
+Install its CMake interface target:
 
 ```bash
-cmake -S bindings/cpp -B target/cpp-build \
-  -DPAIMON_C_LIBRARY="$PWD/target/release/libpaimon_c.so" \
-  -DPAIMON_CPP_BUILD_EXAMPLES=ON
-cmake --build target/cpp-build
 cmake --install target/cpp-build --prefix /your/prefix
 ```
 
-When `PAIMON_C_LIBRARY` is set, installation copies `libpaimon_c` into the
-prefix and the package exports imported target `Paimon::c`. Installed consumers
-can build a verified no-runtime plugin with the provided helper:
+Installation always bundles the just-built `libpaimon_c` and exports imported
+target `Paimon::c`. Installed consumers can build a verified no-runtime plugin
+with the provided helper:
 
 ```cmake
 cmake_minimum_required(VERSION 3.15)
@@ -133,8 +140,8 @@ only `$ORIGIN` as its runtime search path, and runs the installed ELF guard
 after every successful link.
 
 `Paimon::cpp` remains the header-only facade target for consumers that manage
-their own final link. `PaimonCpp_C_LIBRARY` may be set before `find_package` to
-select an externally installed `libpaimon_c`.
+their own final link. The installed package always resolves `Paimon::c` to the
+library bundled in the same installation prefix.
 
 ## Linux runtime guard
 
@@ -144,7 +151,7 @@ the ELF guard, preventing a newer build host from silently raising the runtime
 glibc requirement or introducing a shared compiler/C++ runtime:
 
 ```bash
-bindings/cpp/scripts/build_linux_release.sh
+bindings/c/scripts/build_linux_release.sh
 ```
 
 The validated library is written to

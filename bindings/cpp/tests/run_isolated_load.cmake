@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-foreach(required IN ITEMS LOADER PLUGIN PAIMON_C_LIBRARY TEST_ROOT)
+foreach(required IN ITEMS LOADER PLUGIN PAIMON_C_LIBRARY_UNDER_TEST TEST_ROOT)
   if(NOT DEFINED ${required})
     message(FATAL_ERROR "missing -D${required}=...")
   endif()
@@ -23,7 +23,8 @@ endforeach()
 
 file(REMOVE_RECURSE "${TEST_ROOT}")
 file(MAKE_DIRECTORY "${TEST_ROOT}")
-file(COPY "${PLUGIN}" "${PAIMON_C_LIBRARY}" DESTINATION "${TEST_ROOT}")
+file(COPY "${PLUGIN}" "${PAIMON_C_LIBRARY_UNDER_TEST}"
+     DESTINATION "${TEST_ROOT}")
 get_filename_component(plugin_name "${PLUGIN}" NAME)
 execute_process(
   COMMAND "${LOADER}" "./${plugin_name}"

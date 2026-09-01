@@ -23,44 +23,95 @@ include(GNUInstallDirs)
 
 option(PAIMON_CPP_BUILD_EXAMPLES "Build the C++ facade examples" OFF)
 option(PAIMON_CPP_BUILD_TESTS "Build the header compile smoke test" OFF)
-set(PAIMON_C_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../c/include" CACHE PATH
-    "Directory containing the cbindgen-generated paimon.h")
-set(PAIMON_C_LIBRARY "" CACHE FILEPATH "Path to libpaimon_c")
+get_filename_component(
+  paimon_rust_root "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
+set(paimon_c_include_dir "${CMAKE_CURRENT_SOURCE_DIR}/../c/include")
 
-if(PAIMON_C_LIBRARY AND NOT EXISTS "${PAIMON_C_LIBRARY}")
-  message(FATAL_ERROR "PAIMON_C_LIBRARY does not exist: ${PAIMON_C_LIBRARY}")
+if(TARGET Paimon::c)
+  message(
+    FATAL_ERROR
+      "bindings/cpp owns Paimon::c and does not accept an external C ABI target")
 endif()
 
-set(PAIMON_C_INSTALL_FILENAME
-    "${CMAKE_SHARED_LIBRARY_PREFIX}paimon_c${CMAKE_SHARED_LIBRARY_SUFFIX}")
-if(PAIMON_C_LIBRARY)
-  get_filename_component(
-    PAIMON_C_INSTALL_FILENAME "${PAIMON_C_LIBRARY}" NAME)
+if(DEFINED ENV{CARGO} AND EXISTS "$ENV{CARGO}")
+  set(paimon_cargo_executable "$ENV{CARGO}")
+elseif(DEFINED ENV{HOME} AND EXISTS "$ENV{HOME}/.cargo/bin/cargo")
+  set(paimon_cargo_executable "$ENV{HOME}/.cargo/bin/cargo")
+else()
+  set(paimon_find_appbundle "${CMAKE_FIND_APPBUNDLE}")
+  set(CMAKE_FIND_APPBUNDLE NEVER)
+  find_program(paimon_cargo_executable NAMES cargo)
+  set(CMAKE_FIND_APPBUNDLE "${paimon_find_appbundle}")
 endif()
+if(NOT paimon_cargo_executable)
+  message(FATAL_ERROR "Rust Cargo was not found")
+endif()
+execute_process(
+  COMMAND "${paimon_cargo_executable}" --version
+  RESULT_VARIABLE paimon_cargo_version_result
+  OUTPUT_VARIABLE paimon_cargo_version
+  OUTPUT_STRIP_TRAILING_WHITESPACE)
+if(NOT paimon_cargo_version_result EQUAL 0 OR
+   NOT paimon_cargo_version MATCHES "^cargo [0-9]")
+  message(FATAL_ERROR "Not a Rust Cargo executable: ${paimon_cargo_executable}")
+endif()
+if(APPLE)
+  set(paimon_c_library "${paimon_rust_root}/target/release/libpaimon_c.dylib")
+  set(paimon_c_build_command
+      "${CMAKE_COMMAND}" -E env "MAKEFLAGS=" "${paimon_cargo_executable}"
+      build --locked --release -p paimon-c)
+elseif(UNIX)
+  string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" paimon_system_processor)
+  if(paimon_system_processor MATCHES "^(x86_64|amd64)$")
+    set(paimon_linux_rust_target x86_64-unknown-linux-gnu)
+  elseif(paimon_system_processor MATCHES "^(aarch64|arm64)$")
+    set(paimon_linux_rust_target aarch64-unknown-linux-gnu)
+  else()
+    message(
+      FATAL_ERROR
+        "Unsupported Linux architecture for paimon-c: ${CMAKE_SYSTEM_PROCESSOR}")
+  endif()
+  set(paimon_c_library
+      "${paimon_rust_root}/target/${paimon_linux_rust_target}/release/libpaimon_c.so")
+  set(paimon_c_build_command
+      "${CMAKE_COMMAND}" -E env "MAKEFLAGS="
+      "PAIMON_LINUX_RUST_TARGET=${paimon_linux_rust_target}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../c/scripts/build_linux_release.sh")
+elseif(WIN32)
+  set(paimon_c_library "${paimon_rust_root}/target/release/paimon_c.dll")
+  set(paimon_c_build_command
+      "${CMAKE_COMMAND}" -E env "MAKEFLAGS=" "${paimon_cargo_executable}"
+      build --locked --release -p paimon-c)
+else()
+  message(FATAL_ERROR "Unsupported platform for automatic paimon-c build")
+endif()
+
+add_custom_target(
+  paimon_c_cargo_build ALL
+  COMMAND ${paimon_c_build_command}
+  WORKING_DIRECTORY "${paimon_rust_root}"
+  BYPRODUCTS "${paimon_c_library}"
+  COMMENT "Building the in-tree Rust paimon-c library"
+  VERBATIM
+  USES_TERMINAL)
+
+get_filename_component(
+  PAIMON_C_INSTALL_FILENAME "${paimon_c_library}" NAME)
 
 # Keep the C ABI dependency as a target in both the build and install trees.
 # PaimonCppConfig.cmake recreates this imported target for installed consumers.
-if(NOT TARGET Paimon::c)
-  if(PAIMON_C_LIBRARY)
-    add_library(Paimon::c SHARED IMPORTED GLOBAL)
-    set_target_properties(
-      Paimon::c
-      PROPERTIES
-        IMPORTED_LOCATION "${PAIMON_C_LIBRARY}"
-        IMPORTED_NO_SONAME TRUE
-        INTERFACE_INCLUDE_DIRECTORIES "${PAIMON_C_INCLUDE_DIR}")
-  else()
-    add_library(Paimon::c INTERFACE IMPORTED GLOBAL)
-    set_target_properties(
-      Paimon::c
-      PROPERTIES
-        INTERFACE_INCLUDE_DIRECTORIES "${PAIMON_C_INCLUDE_DIR}"
-        INTERFACE_LINK_LIBRARIES paimon_c)
-  endif()
-endif()
+add_library(Paimon::c SHARED IMPORTED GLOBAL)
+set_target_properties(
+  Paimon::c
+  PROPERTIES
+    IMPORTED_LOCATION "${paimon_c_library}"
+    IMPORTED_NO_SONAME TRUE
+    INTERFACE_INCLUDE_DIRECTORIES "${paimon_c_include_dir}")
+add_dependencies(Paimon::c paimon_c_cargo_build)
 
 add_library(paimon_cpp INTERFACE)
 add_library(Paimon::cpp ALIAS paimon_cpp)
+add_dependencies(paimon_cpp paimon_c_cargo_build)
 set_target_properties(paimon_cpp PROPERTIES EXPORT_NAME cpp)
 target_compile_features(paimon_cpp INTERFACE cxx_std_17)
 target_include_directories(
@@ -69,19 +120,14 @@ target_include_directories(
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
     "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>")
 
-if(PAIMON_C_INCLUDE_DIR)
-  target_include_directories(
-    paimon_cpp INTERFACE "$<BUILD_INTERFACE:${PAIMON_C_INCLUDE_DIR}>")
-endif()
+target_include_directories(
+  paimon_cpp INTERFACE "$<BUILD_INTERFACE:${paimon_c_include_dir}>")
 
 target_link_libraries(paimon_cpp INTERFACE Paimon::c)
 
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/PaimonNoRuntimePlugin.cmake")
 
 if(PAIMON_CPP_BUILD_EXAMPLES)
-  if(NOT PAIMON_C_INCLUDE_DIR)
-    message(FATAL_ERROR "PAIMON_C_INCLUDE_DIR is required for examples")
-  endif()
   add_executable(paimon_cpp_batch_read examples/batch_read.cpp)
   target_link_libraries(paimon_cpp_batch_read PRIVATE Paimon::cpp)
   add_executable(paimon_cpp_streaming_write examples/streaming_write.cpp)
@@ -113,7 +159,7 @@ if(PAIMON_CPP_BUILD_TESTS)
     COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}
             --target paimon_cpp_header_smoke)
 
-  if(PAIMON_C_LIBRARY AND UNIX AND NOT APPLE)
+  if(UNIX AND NOT APPLE)
     # Compile as C++, but deliberately invoke the C linker driver. This proves
     # the facade itself needs no libstdc++/libc++ symbols while resolving every
     # wrapped function against the real libpaimon_c artifact.
@@ -122,29 +168,29 @@ if(PAIMON_CPP_BUILD_TESTS)
     set(paimon_cpp_smoke_library
         "${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_SHARED_LIBRARY_PREFIX}paimon_cpp_real_link_smoke${CMAKE_SHARED_LIBRARY_SUFFIX}")
     get_filename_component(
-      PAIMON_C_LIBRARY_DIR "${PAIMON_C_LIBRARY}" DIRECTORY)
+      paimon_c_library_dir "${paimon_c_library}" DIRECTORY)
     add_custom_command(
       OUTPUT "${paimon_cpp_smoke_object}"
       COMMAND
         "${CMAKE_CXX_COMPILER}" -std=c++17 -fPIC -fno-exceptions -fno-rtti
         -fvisibility=hidden -fvisibility-inlines-hidden
         "-I${CMAKE_CURRENT_SOURCE_DIR}/include"
-        "-I${PAIMON_C_INCLUDE_DIR}"
+        "-I${paimon_c_include_dir}"
         -c "${CMAKE_CURRENT_SOURCE_DIR}/tests/header_smoke.cpp"
         -o "${paimon_cpp_smoke_object}"
       DEPENDS
         tests/header_smoke.cpp
         include/paimon/paimon.hpp
-        "${PAIMON_C_INCLUDE_DIR}/paimon.h"
+        "${paimon_c_include_dir}/paimon.h"
       VERBATIM)
     add_custom_command(
       OUTPUT "${paimon_cpp_smoke_library}"
       COMMAND
         "${CMAKE_C_COMPILER}" -shared
         "${paimon_cpp_smoke_object}"
-        "-L${PAIMON_C_LIBRARY_DIR}" -lpaimon_c -Wl,-z,defs
+        "-L${paimon_c_library_dir}" -lpaimon_c -Wl,-z,defs
         -o "${paimon_cpp_smoke_library}"
-      DEPENDS "${paimon_cpp_smoke_object}" "${PAIMON_C_LIBRARY}"
+      DEPENDS "${paimon_cpp_smoke_object}" "${paimon_c_library}"
       VERBATIM)
     add_custom_target(
       paimon_cpp_real_link_smoke ALL DEPENDS "${paimon_cpp_smoke_library}")
@@ -172,7 +218,7 @@ if(PAIMON_CPP_BUILD_TESTS)
     add_test(
       NAME paimon_c_no_cpp_runtime
       COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/scripts/verify_linux_elf.sh"
-              "${PAIMON_C_LIBRARY}")
+              "${paimon_c_library}")
     add_test(
       NAME paimon_cpp_facade_no_cpp_runtime
       COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/scripts/verify_linux_elf.sh"
@@ -250,7 +296,7 @@ if(PAIMON_CPP_BUILD_TESTS)
         "${CMAKE_COMMAND}"
         "-DLOADER=$<TARGET_FILE:paimon_cpp_dlopen_smoke>"
         "-DPLUGIN=$<TARGET_FILE:paimon_cpp_no_runtime_plugin>"
-        "-DPAIMON_C_LIBRARY=${PAIMON_C_LIBRARY}"
+        "-DPAIMON_C_LIBRARY_UNDER_TEST=${paimon_c_library}"
         "-DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/isolated-load-test"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/run_isolated_load.cmake")
 
@@ -302,16 +348,12 @@ if(PAIMON_CPP_BUILD_TESTS)
 endif()
 
 install(DIRECTORY include/ DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
-if(EXISTS "${PAIMON_C_INCLUDE_DIR}/paimon.h")
-  install(
-    FILES "${PAIMON_C_INCLUDE_DIR}/paimon.h"
-    DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
-endif()
-if(PAIMON_C_LIBRARY)
-  install(
-    FILES "${PAIMON_C_LIBRARY}"
-    DESTINATION "${CMAKE_INSTALL_LIBDIR}")
-endif()
+install(
+  FILES "${paimon_c_include_dir}/paimon.h"
+  DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
+install(
+  FILES "${paimon_c_library}"
+  DESTINATION "${CMAKE_INSTALL_LIBDIR}")
 install(
   TARGETS paimon_cpp
   EXPORT PaimonCppTargets

@@ -17,38 +17,41 @@
 
 @PACKAGE_INIT@
 
-if(NOT TARGET Paimon::c)
-  set(_paimon_c_bundled
-      "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_LIBDIR@/@PAIMON_C_INSTALL_FILENAME@")
-  if(DEFINED PaimonCpp_C_LIBRARY)
-    set(_paimon_c_library "${PaimonCpp_C_LIBRARY}")
-  elseif(EXISTS "${_paimon_c_bundled}")
-    set(_paimon_c_library "${_paimon_c_bundled}")
-  else()
-    unset(_PaimonCpp_DISCOVERED_C_LIBRARY CACHE)
-    find_library(
-      _PaimonCpp_DISCOVERED_C_LIBRARY
-      NAMES paimon_c
-      HINTS "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_LIBDIR@")
-    set(_paimon_c_library "${_PaimonCpp_DISCOVERED_C_LIBRARY}")
-    unset(_PaimonCpp_DISCOVERED_C_LIBRARY CACHE)
-  endif()
-
-  if(NOT _paimon_c_library OR NOT EXISTS "${_paimon_c_library}")
+if(TARGET Paimon::cpp)
+  if(NOT TARGET Paimon::c)
     set(PaimonCpp_FOUND FALSE)
     set(PaimonCpp_NOT_FOUND_MESSAGE
-        "libpaimon_c was not found; install it under the package prefix or set PaimonCpp_C_LIBRARY")
+        "Paimon::cpp exists without its bundled Paimon::c target")
     return()
   endif()
-
-  add_library(Paimon::c SHARED IMPORTED)
-  set_target_properties(
-    Paimon::c
-    PROPERTIES
-      IMPORTED_LOCATION "${_paimon_c_library}"
-      IMPORTED_NO_SONAME TRUE
-      INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_INCLUDEDIR@")
+  include("${CMAKE_CURRENT_LIST_DIR}/PaimonNoRuntimePlugin.cmake")
+  check_required_components(PaimonCpp)
+  return()
 endif()
+
+if(TARGET Paimon::c)
+  set(PaimonCpp_FOUND FALSE)
+  set(PaimonCpp_NOT_FOUND_MESSAGE
+      "Paimon::c already exists; PaimonCpp requires its bundled paimon-c library")
+  return()
+endif()
+
+set(_paimon_c_library
+    "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_LIBDIR@/@PAIMON_C_INSTALL_FILENAME@")
+if(NOT EXISTS "${_paimon_c_library}")
+  set(PaimonCpp_FOUND FALSE)
+  set(PaimonCpp_NOT_FOUND_MESSAGE
+      "the bundled paimon-c library is missing: ${_paimon_c_library}")
+  return()
+endif()
+
+add_library(Paimon::c SHARED IMPORTED)
+set_target_properties(
+  Paimon::c
+  PROPERTIES
+    IMPORTED_LOCATION "${_paimon_c_library}"
+    IMPORTED_NO_SONAME TRUE
+    INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_INCLUDEDIR@")
 
 include("${CMAKE_CURRENT_LIST_DIR}/PaimonCppTargets.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/PaimonNoRuntimePlugin.cmake")

@@ -19,6 +19,10 @@ cmake_minimum_required(VERSION 3.15)
 project(PaimonCppInstallTreeConsumer LANGUAGES C CXX)
 
 find_package(PaimonCpp CONFIG REQUIRED)
+# Package discovery may happen through more than one dependency. A repeated
+# lookup must retain the same bundled Paimon::c target instead of treating it
+# as an external override.
+find_package(PaimonCpp CONFIG REQUIRED)
 paimon_add_no_runtime_plugin(
   paimon_install_tree_consumer
   SOURCES plugin.cpp)
