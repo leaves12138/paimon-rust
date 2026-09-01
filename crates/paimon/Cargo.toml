@@ -118,15 +118,7 @@ tokio-util = { workspace = true, features = ["compat", "io-util"] }
 parquet = { workspace = true, features = ["async", "zstd", "lz4", "snap"] }
 orc-rust = "0.8.0"
 async-stream = "0.3.6"
-# Use the rustls TLS stack with the platform trust store so native artifacts do
-# not depend on libssl/libcrypto while enterprise and system CAs remain usable.
-reqwest = { version = "0.12", default-features = false, features = [
-    "charset",
-    "http2",
-    "json",
-    "rustls-tls-native-roots",
-    "system-proxy",
-] }
+reqwest = { version = "0.12", features = ["json"] }
 # DLF authentication dependencies
 base64 = "0.22"
 hex = "0.4"

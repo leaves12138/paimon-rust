@@ -192,6 +192,32 @@ BUNDLED_COMPONENTS = (
         crate_version="0.4.7",
         required_features=("static",),
     ),
+    BundledComponent(
+        crate="openssl-sys",
+        license_path="third-party-licenses/openssl-1.1.1.LICENSE",
+        component="OpenSSL 1.1.1k FIPS libssl and libcrypto shared libraries",
+        component_url="https://github.com/openssl/openssl/tree/OpenSSL_1_1_1k",
+        license_name="OpenSSL 1.1.1 and Original SSLeay Licenses",
+        anchor="bundled-openssl-1.1.1",
+        components=("python",),
+        targets=("x86_64-unknown-linux-gnu",),
+        license_from_repository=True,
+        required=True,
+        relationship="linked through",
+    ),
+    BundledComponent(
+        crate="openssl-sys",
+        license_path="third-party-licenses/openssl-1.1.1.LICENSE",
+        component="OpenSSL 1.1.1w libssl and libcrypto shared libraries",
+        component_url="https://github.com/openssl/openssl/tree/OpenSSL_1_1_1w",
+        license_name="OpenSSL 1.1.1 and Original SSLeay Licenses",
+        anchor="bundled-openssl-1.1.1",
+        components=("python",),
+        targets=("aarch64-unknown-linux-gnu",),
+        license_from_repository=True,
+        required=True,
+        relationship="linked through",
+    ),
 )
 
 ALLOC_PLACEHOLDER = "Copyright (c) &lt;year&gt; &lt;owner&gt;."
