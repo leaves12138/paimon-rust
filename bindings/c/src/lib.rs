@@ -25,11 +25,13 @@ mod error;
 mod file_io;
 mod identifier;
 mod result;
+mod stream;
 mod table;
 #[cfg(test)]
 mod tests;
 mod types;
 mod vector_search;
+mod version;
 mod write;
 
 use std::sync::OnceLock;

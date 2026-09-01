@@ -145,9 +145,13 @@ impl SnapshotManager {
         let hint_path = self.latest_hint_path();
         if let Some(hint_id) = self.read_hint(&hint_path).await {
             if hint_id > 0 {
-                let next_path = self.snapshot_path(hint_id + 1);
-                let next_input = self.file_io.new_input(&next_path)?;
-                if !next_input.exists().await? {
+                if let Some(next_id) = hint_id.checked_add(1) {
+                    let next_path = self.snapshot_path(next_id);
+                    let next_input = self.file_io.new_input(&next_path)?;
+                    if !next_input.exists().await? {
+                        return Ok(Some(hint_id));
+                    }
+                } else {
                     return Ok(Some(hint_id));
                 }
             }
@@ -244,10 +248,10 @@ impl SnapshotManager {
     /// Writes the snapshot JSON to the target path. Returns `false` if the
     /// target already exists (another writer won the race).
     ///
-    /// On file systems that support atomic rename, we write to a temp file
-    /// first then rename. On backends where rename is not supported (e.g.
-    /// memory, object stores), we fall back to a direct write after an
-    /// existence check.
+    /// The snapshot is first written under a unique temporary name and then
+    /// published with a backend-enforced destination precondition. Backends
+    /// without an atomic publish-if-absent primitive fail closed instead of
+    /// using a racy `exists + write` fallback.
     pub async fn commit_snapshot(&self, snapshot: &Snapshot) -> crate::Result<bool> {
         let target_path = self.snapshot_path(snapshot.id());
 
@@ -256,35 +260,17 @@ impl SnapshotManager {
             source: Some(Box::new(e)),
         })?;
 
-        // Try rename-based atomic commit first, fall back to check-and-write.
-        //
-        // TODO: opendal's rename uses POSIX semantics which silently overwrites the target.
-        //  The exists() check below narrows the race window but does not eliminate it.
-        //  Java Paimon uses `lock.runWithLock(() -> !fileIO.exists(newPath) && callable.call())`
-        //  for full mutual exclusion. We need an external lock mechanism (like Java's Lock
-        //  interface) for backends without atomic rename-no-replace support.
         let tmp_path = format!("{}.tmp-{}", target_path, uuid::Uuid::new_v4());
         let output = self.file_io.new_output(&tmp_path)?;
-        output.write(bytes::Bytes::from(json.clone())).await?;
+        let json = bytes::Bytes::from(json);
+        output.write(json.clone()).await?;
 
-        // Check before rename to avoid silent overwrite (opendal uses POSIX rename semantics)
-        if self.file_io.exists(&target_path).await? {
-            let _ = self.file_io.delete_file(&tmp_path).await;
+        if !self
+            .file_io
+            .publish_if_not_exists(&tmp_path, &target_path, json)
+            .await?
+        {
             return Ok(false);
-        }
-
-        match self.file_io.rename(&tmp_path, &target_path).await {
-            Ok(()) => {}
-            Err(_) => {
-                // Rename not supported (e.g. memory/object store).
-                // Clean up temp file, then check-and-write.
-                let _ = self.file_io.delete_file(&tmp_path).await;
-                if self.file_io.exists(&target_path).await? {
-                    return Ok(false);
-                }
-                let output = self.file_io.new_output(&target_path)?;
-                output.write(bytes::Bytes::from(json)).await?;
-            }
         }
 
         // Update LATEST hint (best-effort)
@@ -639,6 +625,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_concurrent_snapshot_publish_has_one_winner() {
+        let (_, sm) = setup("memory:/test_commit_race").await;
+        let first = test_snapshot(1);
+        let second = Snapshot::builder()
+            .version(3)
+            .id(1)
+            .schema_id(0)
+            .base_manifest_list("other-base-list".to_string())
+            .delta_manifest_list("other-delta-list".to_string())
+            .commit_user("other-user".to_string())
+            .commit_identifier(1)
+            .commit_kind(CommitKind::APPEND)
+            .time_millis(1001)
+            .build();
+
+        let (first_result, second_result) =
+            tokio::join!(sm.commit_snapshot(&first), sm.commit_snapshot(&second));
+        let first_won = first_result.unwrap();
+        let second_won = second_result.unwrap();
+        assert_ne!(first_won, second_won);
+
+        let committed = sm.get_snapshot(1).await.unwrap();
+        assert!(
+            (first_won && committed.commit_user() == "test-user")
+                || (second_won && committed.commit_user() == "other-user")
+        );
+    }
+
+    #[tokio::test]
     async fn test_commit_updates_latest_hint() {
         let (_, sm) = setup("memory:/test_commit_hint").await;
         let snap = test_snapshot(1);
@@ -654,6 +669,13 @@ mod tests {
         sm.write_latest_hint(42).await.unwrap();
         let hint = sm.read_hint(&sm.latest_hint_path()).await;
         assert_eq!(hint, Some(42));
+    }
+
+    #[tokio::test]
+    async fn test_latest_hint_at_max_id_does_not_overflow() {
+        let (_, sm) = setup("memory:/test_latest_hint_max").await;
+        sm.write_latest_hint(i64::MAX).await.unwrap();
+        assert_eq!(sm.get_latest_snapshot_id().await.unwrap(), Some(i64::MAX));
     }
 
     #[tokio::test]

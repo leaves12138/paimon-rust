@@ -24,14 +24,15 @@ catalog and table access, scan planning, predicate push-down, streaming reads,
 writes and commits, and vector search. Record batches cross the ABI through the
 [Arrow C Data Interface](https://arrow.apache.org/docs/format/CDataInterface.html).
 
-The C binding is currently built from source. The repository does not check in
-a generated header or publish pre-built C packages.
+The C binding is currently built from source. Its generated, C++-compatible
+public header is checked in at `bindings/c/include/paimon.h`; releases do not
+yet publish pre-built native packages.
 
 ## Prerequisites
 
 - A Rust toolchain supported by this repository
 - A C11-compatible compiler
-- [`cbindgen`](https://github.com/mozilla/cbindgen) for generating the C header
+- [`cbindgen`](https://github.com/mozilla/cbindgen) only when updating the C ABI
 - An Arrow implementation if the application reads or writes record batches
 
 Install `cbindgen` when it is not already available:
@@ -46,7 +47,8 @@ Run the following commands from the repository root:
 
 ```bash
 cargo build --release -p paimon-c
-cbindgen bindings/c --lang c --output target/release/paimon.h
+cbindgen --config bindings/c/cbindgen.toml bindings/c \
+  --output bindings/c/include/paimon.h
 ```
 
 The build produces a dynamic library and a static library under
@@ -58,11 +60,11 @@ The build produces a dynamic library and a static library under
 | macOS | `libpaimon_c.dylib` |
 | Windows | `paimon_c.dll` |
 
-Link the generated header and library into an application:
+Link the checked-in header and library into an application:
 
 ```bash
 cc -std=c11 example.c \
-  -Itarget/release \
+  -Ibindings/c/include \
   -Ltarget/release \
   -lpaimon_c \
   -o example
@@ -77,6 +79,11 @@ LD_LIBRARY_PATH=target/release ./example /path/to/warehouse
 # macOS
 DYLD_LIBRARY_PATH=target/release ./example /path/to/warehouse
 ```
+
+The header-only C++17 facade under `bindings/cpp` adds move-only RAII handles
+without creating a C++ shared library. The only Paimon binary remains
+`libpaimon_c`, and release validation rejects dependencies on `libstdc++`,
+`libc++`, `GLIBCXX_*`, or `CXXABI_*` symbols.
 
 ## Opening and Scanning a Table
 
@@ -275,6 +282,60 @@ range is clamped to the number of available splits.
     reversed: `paimon_table_write_write_arrow_batch` consumes the exported
     Arrow structures, so the caller must not release them again.
 
+## Continuous Stream Reading
+
+`paimon_read_builder_new_stream_scan` creates an owned pull-based scanner. It
+does not start a callback thread. Each call to `paimon_stream_scan_poll` returns
+one of `PAIMON_STREAM_POLL_DATA`, `PAIMON_STREAM_POLL_WAITING`, or
+`PAIMON_STREAM_POLL_END`:
+
+```c
+paimon_stream_scan_options options;
+paimon_error *error = paimon_stream_scan_options_init(&options);
+options.startup_mode = PAIMON_STREAM_STARTUP_LATEST;
+options.follow_up_mode = PAIMON_STREAM_FOLLOW_UP_AUTO;
+
+paimon_result_stream_scan created =
+    paimon_read_builder_new_stream_scan(read_builder, &options);
+
+for (;;) {
+    paimon_result_stream_poll poll = paimon_stream_scan_poll(created.scan);
+    if (poll.error != NULL) {
+        /* Inspect and free poll.error. */
+        break;
+    }
+    if (poll.status == PAIMON_STREAM_POLL_WAITING) {
+        /* Schedule the next poll with application-controlled backoff. */
+        continue;
+    }
+    if (poll.status == PAIMON_STREAM_POLL_END) {
+        break;
+    }
+
+    paimon_result_record_batch_reader batches =
+        paimon_stream_plan_read_to_arrow(
+            read, poll.plan, 0, SIZE_MAX, PAIMON_STREAM_READ_DATA);
+    /* Drain batches before checkpointing poll.next_snapshot_id. */
+    paimon_stream_plan_free(poll.plan);
+}
+```
+
+The scan checkpoint is the next snapshot ID and advances when planning
+succeeds. Persist it only after all returned work is durably accounted for.
+`paimon_stream_plan_serialize` preserves a pending plan across restart. The
+current format recovers at plan boundaries, so a partially consumed plan may be
+replayed. A stream-scan handle is single-thread-confined; poll, checkpoint,
+restore, and free calls for one handle must be externally serialized.
+Persisted stream plans with external data-file paths are not supported; plan
+serialization fails before the checkpoint is persisted.
+Audit-log mode is available for incremental plans and prepends the UTF-8
+`rowkind` column (`+I`, `-U`, `+U`, `-D`). Follow-up `OVERWRITE` snapshots are
+reported as unsupported in version 1 rather than silently skipped.
+
+Decoupled changelog fallback and consumer snapshot-retention registration are
+not implemented yet. Configure snapshot retention to exceed the maximum reader
+lag; an expired cursor fails explicitly instead of skipping data.
+
 ## Projection and Predicates
 
 Projection uses a null-terminated array of column names:
@@ -354,6 +415,32 @@ values.
     they share a commit identity. Commit messages must be freed with
     `paimon_commit_messages_free` even after a successful commit. The caller
     retains message ownership and may retry a failed commit.
+
+For a recoverable streaming checkpoint, bind the messages to a non-negative,
+monotonically increasing identifier with `paimon_commit_messages_prepare`.
+`INT64_MAX` is reserved for unidentified batch commits and is not a valid
+streaming checkpoint identifier.
+Persist the bytes returned by `paimon_prepared_commit_serialize` before
+committing. After a crash or an indeterminate commit response, deserialize the
+same bytes and call `paimon_table_commit_commit_prepared`; this retry-safe path
+filters an identifier which was already committed. Parallel writers may merge
+prepared commits only when table, `commit_user`, overwrite mode, and identifier
+all match. Do not call `paimon_table_commit_abort_prepared` after an
+indeterminate response: retry first so files from a successful commit are not
+deleted. Commit and abort for the same `(table, commit_user)` must also be
+fenced across processes; truncated snapshot history makes abort fail closed.
+Duplicate filtering is stored in retained snapshots, so snapshot retention
+must cover the maximum writer-recovery horizon. Do not retry a prepared commit
+older than that horizon, and use a new globally unique `commit_user` for each
+fresh job.
+Serialized plan/commit blobs are trusted checkpoint state and are not
+cryptographically authenticated, so persist them with appropriate integrity
+and access controls.
+
+Filesystem-catalog snapshot publication requires an atomic
+publish-if-not-exists capability. If the storage backend cannot provide a
+conditional rename, copy, or write, commit returns `Unsupported`; use REST
+commit or an external lock rather than a racy check-then-write fallback.
 
 ## Error Handling and Resource Ownership
 

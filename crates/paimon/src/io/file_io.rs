@@ -29,7 +29,7 @@ use chrono::{DateTime, Utc};
 use futures::stream::BoxStream;
 use futures::{StreamExt, TryStreamExt};
 use opendal::raw::normalize_root;
-use opendal::Operator;
+use opendal::{ErrorKind as OpendalErrorKind, Operator};
 use snafu::ResultExt;
 use tokio_util::compat::FuturesAsyncWriteCompatExt;
 use url::Url;
@@ -442,6 +442,125 @@ impl FileIO {
 
         Ok(())
     }
+
+    /// Publish a fully written temporary file without replacing an existing
+    /// destination.
+    ///
+    /// The operation uses only backend capabilities whose destination
+    /// precondition is atomic. It never falls back to `exists + write`, which
+    /// would allow two committers to overwrite the same snapshot. Backends
+    /// without a conditional rename, copy, or write must use REST commit or an
+    /// external lock.
+    pub(crate) async fn publish_if_not_exists(
+        &self,
+        src: &str,
+        dst: &str,
+        contents: Bytes,
+    ) -> Result<bool> {
+        let (op_src, relative_src) = self.create(src).await?;
+        let (op_dst, relative_dst) = self.create(dst).await?;
+        let src_cache_path = cache_object_path(&op_src, &relative_src);
+        let dst_cache_path = cache_object_path(&op_dst, &relative_dst);
+        let capability = op_src.info().capability();
+
+        if capability.rename_with_if_not_exists {
+            match op_src
+                .rename_with(&relative_src, &relative_dst)
+                .if_not_exists(true)
+                .await
+            {
+                Ok(_) => {
+                    self.invalidate_publish_cache(&src_cache_path, &dst_cache_path)
+                        .await;
+                    return Ok(true);
+                }
+                Err(error) if destination_already_exists(&error) => {
+                    let _ = op_src.delete(&relative_src).await;
+                    return Ok(false);
+                }
+                Err(error) if error.kind() != OpendalErrorKind::Unsupported => {
+                    let _ = op_src.delete(&relative_src).await;
+                    return Err(error).context(IoUnexpectedSnafu {
+                        message: format!("Failed to publish '{src}' as '{dst}'"),
+                    });
+                }
+                Err(_) => {}
+            }
+        }
+
+        if capability.copy_with_if_not_exists {
+            match op_src
+                .copy_with(&relative_src, &relative_dst)
+                .if_not_exists(true)
+                .await
+            {
+                Ok(_) => {
+                    let _ = op_src.delete(&relative_src).await;
+                    self.invalidate_publish_cache(&src_cache_path, &dst_cache_path)
+                        .await;
+                    return Ok(true);
+                }
+                Err(error) if destination_already_exists(&error) => {
+                    let _ = op_src.delete(&relative_src).await;
+                    return Ok(false);
+                }
+                Err(error) if error.kind() != OpendalErrorKind::Unsupported => {
+                    let _ = op_src.delete(&relative_src).await;
+                    return Err(error).context(IoUnexpectedSnafu {
+                        message: format!("Failed to publish '{src}' as '{dst}'"),
+                    });
+                }
+                Err(_) => {}
+            }
+        }
+
+        let write_capability = op_dst.info().capability();
+        if write_capability.write_with_if_not_exists {
+            match op_dst
+                .write_with(&relative_dst, contents)
+                .if_not_exists(true)
+                .await
+            {
+                Ok(_) => {
+                    let _ = op_src.delete(&relative_src).await;
+                    self.invalidate_publish_cache(&src_cache_path, &dst_cache_path)
+                        .await;
+                    return Ok(true);
+                }
+                Err(error) if destination_already_exists(&error) => {
+                    let _ = op_src.delete(&relative_src).await;
+                    return Ok(false);
+                }
+                Err(error) => {
+                    let _ = op_src.delete(&relative_src).await;
+                    return Err(error).context(IoUnexpectedSnafu {
+                        message: format!("Failed to publish '{src}' as '{dst}'"),
+                    });
+                }
+            }
+        }
+
+        let _ = op_src.delete(&relative_src).await;
+        Err(Error::Unsupported {
+            message: format!(
+                "Storage backend for '{dst}' has no atomic publish-if-absent operation; use REST commit or an external lock"
+            ),
+        })
+    }
+
+    async fn invalidate_publish_cache(&self, src: &str, dst: &str) {
+        if let Some(cache) = &self.cache {
+            cache.invalidate_prefix(src).await;
+            cache.invalidate_prefix(dst).await;
+        }
+    }
+}
+
+fn destination_already_exists(error: &opendal::Error) -> bool {
+    matches!(
+        error.kind(),
+        OpendalErrorKind::ConditionNotMatch | OpendalErrorKind::AlreadyExists
+    )
 }
 
 fn status_path(base_path: &str, entry_path: &str) -> String {
@@ -1293,6 +1412,39 @@ mod file_action_test {
     async fn test_list_status_fs_should_return_entry_paths() {
         let file_io = setup_fs_file_io();
         common_test_list_status_paths(&file_io, "file:/tmp/test_list_status_paths_fs/").await;
+    }
+
+    #[tokio::test]
+    async fn test_publish_if_not_exists_fs_has_one_winner_and_cleans_temps() {
+        let directory = tempdir().unwrap();
+        let file_io = setup_fs_file_io();
+        let first = local_file_path(&directory.path().join("first.tmp"));
+        let second = local_file_path(&directory.path().join("second.tmp"));
+        let target = local_file_path(&directory.path().join("snapshot-1"));
+        let first_bytes = Bytes::from_static(b"first");
+        let second_bytes = Bytes::from_static(b"second");
+        file_io
+            .new_output(&first)
+            .unwrap()
+            .write(first_bytes.clone())
+            .await
+            .unwrap();
+        file_io
+            .new_output(&second)
+            .unwrap()
+            .write(second_bytes.clone())
+            .await
+            .unwrap();
+
+        let (first_result, second_result) = tokio::join!(
+            file_io.publish_if_not_exists(&first, &target, first_bytes),
+            file_io.publish_if_not_exists(&second, &target, second_bytes)
+        );
+        assert_ne!(first_result.unwrap(), second_result.unwrap());
+        let committed = file_io.new_input(&target).unwrap().read().await.unwrap();
+        assert!(committed.as_ref() == b"first" || committed.as_ref() == b"second");
+        assert!(!file_io.exists(&first).await.unwrap());
+        assert!(!file_io.exists(&second).await.unwrap());
     }
 
     #[test]

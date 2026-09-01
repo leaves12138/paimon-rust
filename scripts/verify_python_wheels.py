@@ -403,7 +403,6 @@ def verify_wheel(path: Path) -> tuple[str, str]:
         require(record_member in names, f"wheel has no RECORD: {path.name}")
         verify_record(archive, names, record_member, path.name)
 
-        license_report = None
         for license_file in metadata.get_all("License-File", []):
             relative = normalized_relative_path(license_file, "License-File entry")
             members = (
@@ -436,7 +435,6 @@ def verify_wheel(path: Path) -> tuple[str, str]:
                 if relative.name == "NOTICE":
                     verify_avro_notice(actual, f"{path.name}:{member}")
                 if relative.name == "THIRD-PARTY-LICENSES.html":
-                    license_report = actual
                     verify_license_report(actual, target, f"{path.name}:{member}")
 
         native_members = [
@@ -465,50 +463,10 @@ def verify_wheel(path: Path) -> tuple[str, str]:
         extra_native_members = [
             name for name in names if name != native_member and is_native_library(name)
         ]
-        if target.endswith("linux-gnu"):
-            openssl_version = (
-                b"OpenSSL 1.1.1k  FIPS"
-                if target.startswith("x86_64")
-                else b"OpenSSL 1.1.1w"
-            )
-            openssl_libraries = (
-                (r"pypaimon_rust\.libs/libcrypto-[^/]+\.so\.1\.1", openssl_version),
-                (r"pypaimon_rust\.libs/libssl-[^/]+\.so\.1\.1", None),
-            )
-            for pattern, version_marker in openssl_libraries:
-                matches = [
-                    name for name in extra_native_members if re.fullmatch(pattern, name)
-                ]
-                require(
-                    len(matches) == 1,
-                    f"wheel must contain one {pattern}: {extra_native_members}",
-                )
-                with archive.open(matches[0]) as native_file:
-                    content = native_file.read()
-                    verify_native_header(
-                        content,
-                        target,
-                        f"{path.name}:{matches[0]}",
-                    )
-                    if version_marker is not None:
-                        require(
-                            version_marker in content,
-                            f"wheel libcrypto is missing {version_marker!r}",
-                        )
-            require(
-                len(extra_native_members) == len(openssl_libraries),
-                f"wheel has unexpected native libraries: {extra_native_members}",
-            )
-            require(
-                license_report is not None
-                and b'id="bundled-openssl-1.1.1"' in license_report,
-                "Linux wheel license report is missing the OpenSSL anchor",
-            )
-        else:
-            require(
-                not extra_native_members,
-                f"wheel has unexpected native libraries: {extra_native_members}",
-            )
+        require(
+            not extra_native_members,
+            f"wheel has unexpected native libraries: {extra_native_members}",
+        )
 
     return target, version
 
