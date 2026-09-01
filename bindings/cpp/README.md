@@ -138,11 +138,17 @@ select an externally installed `libpaimon_c`.
 
 ## Linux runtime guard
 
-Run the ELF guard on every release artifact:
+Install Zig and `cargo-zigbuild`, then produce every Linux release artifact
+through the checked build script. It targets glibc 2.17 and immediately runs
+the ELF guard, preventing a newer build host from silently raising the runtime
+glibc requirement or introducing a shared compiler/C++ runtime:
 
 ```bash
-bindings/cpp/scripts/verify_linux_elf.sh target/release/libpaimon_c.so
+bindings/cpp/scripts/build_linux_release.sh
 ```
+
+The validated library is written to
+`target/<rust-target>/release/libpaimon_c.so`.
 
 It prints the build host's `ldd --version` and applies a `DT_NEEDED` allowlist
 containing glibc components and `libpaimon_c`. It rejects C++ runtimes,
