@@ -83,10 +83,11 @@ cmake -S bindings/cpp -B target/cpp-build \
 cmake --build target/cpp-build
 ```
 
-The default build stages a complete SDK under `target/cpp-build/sdk`:
+The CMake build directory itself is a complete, directly consumable artifact
+tree:
 
 ```text
-sdk/
+target/cpp-build/
 ├── include/paimon.h
 ├── include/paimon/paimon.hpp
 ├── <libdir>/libpaimon_c.so       # Linux

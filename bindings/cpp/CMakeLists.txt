@@ -414,16 +414,15 @@ install(
   DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/PaimonCpp"
   COMPONENT ${paimon_cpp_install_component})
 
-# Keep the normal CMake install target, and also materialize a ready-to-use SDK
-# beside the build files so `cmake --build` has an obvious deliverable.
-set(paimon_cpp_sdk_dir "${CMAKE_CURRENT_BINARY_DIR}/sdk")
+# Keep the normal CMake install target, and also materialize the ready-to-use
+# headers, library, and package files directly in the CMake build directory.
 add_custom_target(
-  paimon_cpp_sdk ALL
+  paimon_cpp_artifacts ALL
   COMMAND
     "${CMAKE_COMMAND}" --install "${CMAKE_BINARY_DIR}"
-    --prefix "${paimon_cpp_sdk_dir}"
+    --prefix "${CMAKE_CURRENT_BINARY_DIR}"
     --component ${paimon_cpp_install_component}
   DEPENDS paimon_c_cargo_build
-  COMMENT "Staging the Paimon C++ SDK in ${paimon_cpp_sdk_dir}"
+  COMMENT "Staging the Paimon C++ artifacts in ${CMAKE_CURRENT_BINARY_DIR}"
   VERBATIM
   USES_TERMINAL)
