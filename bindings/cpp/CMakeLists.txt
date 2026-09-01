@@ -47,7 +47,7 @@ if(NOT paimon_cargo_executable)
   message(FATAL_ERROR "Rust Cargo was not found")
 endif()
 execute_process(
-  COMMAND "${paimon_cargo_executable}" --version
+  COMMAND "${paimon_cargo_executable}" -vV
   RESULT_VARIABLE paimon_cargo_version_result
   OUTPUT_VARIABLE paimon_cargo_version
   OUTPUT_STRIP_TRAILING_WHITESPACE)
@@ -55,24 +55,29 @@ if(NOT paimon_cargo_version_result EQUAL 0 OR
    NOT paimon_cargo_version MATCHES "^cargo [0-9]")
   message(FATAL_ERROR "Not a Rust Cargo executable: ${paimon_cargo_executable}")
 endif()
+string(REGEX MATCH "host: ([^\n\r]+)" paimon_cargo_host_match
+             "${paimon_cargo_version}")
+if(NOT paimon_cargo_host_match)
+  message(FATAL_ERROR "Cargo did not report its host target")
+endif()
+set(paimon_rust_host "${CMAKE_MATCH_1}")
+set(paimon_cargo_target_dir "${paimon_rust_root}/target")
+set(paimon_c_release_dir
+    "${paimon_cargo_target_dir}/${paimon_rust_host}/release")
 if(APPLE)
-  set(paimon_c_library "${paimon_rust_root}/target/release/libpaimon_c.dylib")
-  set(paimon_c_build_command
-      "${CMAKE_COMMAND}" -E env "MAKEFLAGS=" "${paimon_cargo_executable}"
-      build --locked --release -p paimon-c)
+  set(paimon_c_library "${paimon_c_release_dir}/libpaimon_c.dylib")
 elseif(UNIX)
-  set(paimon_c_library "${paimon_rust_root}/target/release/libpaimon_c.so")
-  set(paimon_c_build_command
-      "${CMAKE_COMMAND}" -E env "MAKEFLAGS=" "${paimon_cargo_executable}"
-      build --locked --release -p paimon-c)
+  set(paimon_c_library "${paimon_c_release_dir}/libpaimon_c.so")
 elseif(WIN32)
-  set(paimon_c_library "${paimon_rust_root}/target/release/paimon_c.dll")
-  set(paimon_c_build_command
-      "${CMAKE_COMMAND}" -E env "MAKEFLAGS=" "${paimon_cargo_executable}"
-      build --locked --release -p paimon-c)
+  set(paimon_c_library "${paimon_c_release_dir}/paimon_c.dll")
 else()
   message(FATAL_ERROR "Unsupported platform for automatic paimon-c build")
 endif()
+set(paimon_c_build_command
+    "${CMAKE_COMMAND}" -E env "MAKEFLAGS="
+    "CARGO_TARGET_DIR=${paimon_cargo_target_dir}"
+    "${paimon_cargo_executable}" build --locked --release -p paimon-c
+    --target "${paimon_rust_host}")
 
 add_custom_target(
   paimon_c_cargo_build ALL
