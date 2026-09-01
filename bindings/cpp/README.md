@@ -58,6 +58,19 @@ Persisted stream plans currently reject external data-file paths. The failure
 is reported by `StreamPlan::serialize` before a checkpoint can be acknowledged,
 instead of producing a checkpoint that cannot be restored.
 
+Catalog DDL is available directly from the facade. Creation accepts the JSON
+form of Paimon's logical `Schema`; it validates and canonically reassigns field
+IDs before calling the catalog. Both operations return `Status`, so callers can
+choose strict or idempotent create/drop semantics without a Java helper:
+
+```cpp
+auto identifier = paimon::Identifier::create("default", "events");
+auto created = catalog.create_table_from_schema_json(
+    identifier.value(), schema_json, /*ignore_if_exists=*/false);
+auto dropped = catalog.drop_table(
+    identifier.value(), /*ignore_if_not_exists=*/true);
+```
+
 ## Build
 
 Generate the C header and build the Rust library first:

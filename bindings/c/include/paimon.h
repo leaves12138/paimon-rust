@@ -159,6 +159,10 @@ typedef struct paimon_result_catalog_new {
   struct paimon_error *error;
 } paimon_result_catalog_new;
 
+typedef struct paimon_identifier {
+  void *inner;
+} paimon_identifier;
+
 typedef struct paimon_table {
   void *inner;
 } paimon_table;
@@ -167,10 +171,6 @@ typedef struct paimon_result_get_table {
   struct paimon_table *table;
   struct paimon_error *error;
 } paimon_result_get_table;
-
-typedef struct paimon_identifier {
-  void *inner;
-} paimon_identifier;
 
 /**
  * Opaque container for commit messages and their originating write context.
@@ -570,6 +570,33 @@ void paimon_bytes_free(struct paimon_bytes bytes);
  */
 struct paimon_result_catalog_new paimon_catalog_create(const struct paimon_option *options,
                                                        size_t options_len);
+
+/**
+ * Create a table from a logical Paimon `Schema` JSON document.
+ *
+ * The input is normalized and validated through `SchemaBuilder` before it is
+ * sent to the catalog. Field IDs in the JSON are therefore treated as input
+ * ordering hints and reassigned canonically from zero.
+ *
+ * # Safety
+ * `catalog` and `identifier` must be valid Paimon handles. `schema_json` must
+ * point to a valid null-terminated UTF-8 string.
+ */
+struct paimon_error *paimon_catalog_create_table_from_schema_json(const struct paimon_catalog *catalog,
+                                                                  const struct paimon_identifier *identifier,
+                                                                  const char *schema_json,
+                                                                  bool ignore_if_exists);
+
+/**
+ * Drop a table from the catalog.
+ *
+ * # Safety
+ * `catalog` and `identifier` must be valid Paimon handles, or null (returns an
+ * error).
+ */
+struct paimon_error *paimon_catalog_drop_table(const struct paimon_catalog *catalog,
+                                               const struct paimon_identifier *identifier,
+                                               bool ignore_if_not_exists);
 
 /**
  * Free a paimon_catalog.

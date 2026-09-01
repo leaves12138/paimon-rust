@@ -46,6 +46,11 @@ void paimon_cpp_header_smoke(const paimon::Option* options,
   }
 
   auto table = catalog.value().get_table(identifier.value());
+  auto create_table_status = catalog.value().create_table_from_schema_json(
+      identifier.value(), "{}", true);
+  auto drop_table_status = catalog.value().drop_table(identifier.value(), true);
+  (void)create_table_status;
+  (void)drop_table_status;
   if (!table) {
     return;
   }

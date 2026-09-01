@@ -46,13 +46,108 @@ use paimon::spec::{
 use paimon::table::{SnapshotManager, Table};
 
 use crate::blob_reader::*;
+use crate::catalog::*;
 use crate::error::*;
 use crate::file_io::*;
+use crate::identifier::*;
 use crate::stream::*;
 use crate::table::*;
 use crate::types::*;
 use crate::vector_search::*;
 use crate::write::*;
+
+#[test]
+fn test_catalog_create_and_drop_table_from_schema_json() {
+    let directory = tempfile::tempdir().unwrap();
+    let warehouse = CString::new(directory.path().to_string_lossy().as_bytes()).unwrap();
+    let warehouse_key = CString::new("warehouse").unwrap();
+    let options = [paimon_option {
+        key: warehouse_key.as_ptr(),
+        value: warehouse.as_ptr(),
+    }];
+    let catalog_result = unsafe { paimon_catalog_create(options.as_ptr(), options.len()) };
+    assert!(catalog_result.error.is_null());
+    assert!(!catalog_result.catalog.is_null());
+
+    let catalog = unsafe { &*((*catalog_result.catalog).inner as *const Arc<dyn paimon::Catalog>) };
+    crate::runtime()
+        .block_on(catalog.create_database("default", true, HashMap::new()))
+        .unwrap();
+
+    let database = CString::new("default").unwrap();
+    let table_name = CString::new("ffi_ddl").unwrap();
+    let identifier_result =
+        unsafe { paimon_identifier_new(database.as_ptr(), table_name.as_ptr()) };
+    assert!(identifier_result.error.is_null());
+    assert!(!identifier_result.identifier.is_null());
+
+    let schema = Schema::builder()
+        .column("id", DataType::Int(IntType::with_nullable(false)))
+        .option("bucket", "1")
+        .option("bucket-key", "id")
+        .build()
+        .unwrap();
+    let schema_json = CString::new(serde_json::to_string(&schema).unwrap()).unwrap();
+
+    let create_error = unsafe {
+        paimon_catalog_create_table_from_schema_json(
+            catalog_result.catalog,
+            identifier_result.identifier,
+            schema_json.as_ptr(),
+            false,
+        )
+    };
+    assert!(create_error.is_null());
+
+    let table_result =
+        unsafe { paimon_catalog_get_table(catalog_result.catalog, identifier_result.identifier) };
+    assert!(table_result.error.is_null());
+    assert!(!table_result.table.is_null());
+    unsafe { paimon_table_free(table_result.table) };
+
+    let duplicate_error = unsafe {
+        paimon_catalog_create_table_from_schema_json(
+            catalog_result.catalog,
+            identifier_result.identifier,
+            schema_json.as_ptr(),
+            false,
+        )
+    };
+    assert!(!duplicate_error.is_null());
+    assert_eq!(
+        unsafe { (*duplicate_error).code },
+        PAIMON_ERROR_ALREADY_EXISTS
+    );
+    unsafe { paimon_error_free(duplicate_error) };
+    assert!(unsafe {
+        paimon_catalog_create_table_from_schema_json(
+            catalog_result.catalog,
+            identifier_result.identifier,
+            schema_json.as_ptr(),
+            true,
+        )
+    }
+    .is_null());
+
+    assert!(unsafe {
+        paimon_catalog_drop_table(catalog_result.catalog, identifier_result.identifier, false)
+    }
+    .is_null());
+    let missing =
+        unsafe { paimon_catalog_get_table(catalog_result.catalog, identifier_result.identifier) };
+    assert!(missing.table.is_null());
+    assert!(!missing.error.is_null());
+    unsafe { paimon_error_free(missing.error) };
+    assert!(unsafe {
+        paimon_catalog_drop_table(catalog_result.catalog, identifier_result.identifier, true)
+    }
+    .is_null());
+
+    unsafe {
+        paimon_identifier_free(identifier_result.identifier);
+        paimon_catalog_free(catalog_result.catalog);
+    }
+}
 
 // =========================================================================
 //  Helpers

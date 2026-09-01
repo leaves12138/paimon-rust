@@ -191,6 +191,12 @@ paimon_result_catalog_new paimon_catalog_create(const paimon_option* options,
 void paimon_catalog_free(paimon_catalog* catalog);
 paimon_result_get_table paimon_catalog_get_table(
     const paimon_catalog* catalog, const paimon_identifier* identifier);
+paimon_error* paimon_catalog_create_table_from_schema_json(
+    const paimon_catalog* catalog, const paimon_identifier* identifier,
+    const char* schema_json, bool ignore_if_exists);
+paimon_error* paimon_catalog_drop_table(
+    const paimon_catalog* catalog, const paimon_identifier* identifier,
+    bool ignore_if_not_exists);
 paimon_result_identifier_new paimon_identifier_new(const char* database,
                                                    const char* object);
 void paimon_identifier_free(paimon_identifier* identifier);

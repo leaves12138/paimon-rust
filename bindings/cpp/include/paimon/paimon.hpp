@@ -501,6 +501,14 @@ class Catalog final {
   [[nodiscard]] Result<Table> get_table(
       const Identifier& identifier) const noexcept;
 
+  [[nodiscard]] Status create_table_from_schema_json(
+      const Identifier& identifier, const char* schema_json,
+      bool ignore_if_exists = false) const noexcept;
+
+  [[nodiscard]] Status drop_table(
+      const Identifier& identifier,
+      bool ignore_if_not_exists = false) const noexcept;
+
   [[nodiscard]] ::paimon_catalog* native_handle() const noexcept {
     return handle_.get();
   }
@@ -1177,6 +1185,20 @@ inline Result<Table> Catalog::get_table(
     return Result<Table>::failure(Error(adopt_handle, result.error));
   }
   return Result<Table>::success(Table(adopt_handle, result.table));
+}
+
+inline Status Catalog::create_table_from_schema_json(
+    const Identifier& identifier, const char* schema_json,
+    bool ignore_if_exists) const noexcept {
+  return detail::status_from(::paimon_catalog_create_table_from_schema_json(
+      handle_.get(), identifier.native_handle(), schema_json,
+      ignore_if_exists));
+}
+
+inline Status Catalog::drop_table(const Identifier& identifier,
+                                  bool ignore_if_not_exists) const noexcept {
+  return detail::status_from(::paimon_catalog_drop_table(
+      handle_.get(), identifier.native_handle(), ignore_if_not_exists));
 }
 
 inline Result<Table> Table::from_schema_json(
