@@ -18,16 +18,17 @@
 set -eu
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-repo_dir=$(CDPATH= cd -- "$script_dir/../.." && pwd)
+binding_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
+repo_dir=$(CDPATH= cd -- "$binding_dir/../.." && pwd)
 generated=$(mktemp)
 trap 'rm -f "$generated"' EXIT HUP INT TERM
 
-cbindgen --quiet --config "$script_dir/cbindgen.toml" \
-  "$script_dir" --output "$generated"
+cbindgen --quiet --config "$binding_dir/cbindgen.toml" \
+  "$binding_dir" --output "$generated"
 
-if ! cmp -s "$generated" "$script_dir/include/paimon.h"; then
+if ! cmp -s "$generated" "$binding_dir/include/paimon.h"; then
   echo "bindings/c/include/paimon.h is stale; regenerate it with cbindgen" >&2
-  diff -u "$script_dir/include/paimon.h" "$generated" || true
+  diff -u "$binding_dir/include/paimon.h" "$generated" || true
   exit 1
 fi
 
