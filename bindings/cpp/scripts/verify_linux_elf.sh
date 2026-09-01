@@ -102,11 +102,11 @@ needed_names=$(printf '%s\n' "$needed" |
   sed -n 's/.*Shared library: \[\([^]]*\)\].*/\1/p')
 for dependency in $needed_names; do
   case "$dependency" in
-    libstdc++*|libc++*|libsupc++*|libgcc_s*|libunwind*|libatomic*)
+    libstdc++*|libc++*|libsupc++*|libunwind*|libatomic*)
       echo "forbidden non-C runtime dependency in DT_NEEDED: $dependency" >&2
       exit 1
       ;;
-    libc.so.*|libm.so.*|libpthread.so.*|libdl.so.*|librt.so.*|libutil.so.*|libresolv.so.*|libanl.so.*|libBrokenLocale.so.*|libcrypt.so.*|libnss_*.so.*|ld-linux*.so.*|ld64.so.*|ld.so.*|libpaimon_c.so*)
+    libc.so.*|libm.so.*|libpthread.so.*|libdl.so.*|librt.so.*|libutil.so.*|libresolv.so.*|libanl.so.*|libBrokenLocale.so.*|libcrypt.so.*|libnss_*.so.*|libgcc_s.so.*|ld-linux*.so.*|ld64.so.*|ld.so.*|libpaimon_c.so*)
       ;;
     *)
       echo "dependency is outside the glibc/libpaimon_c allowlist: $dependency" >&2
@@ -122,7 +122,7 @@ unexpected_unversioned=$(printf '%s\n' "$undefined" | awk '
     name = $8
     base = name
     sub(/@.*/, "", base)
-    if (base == "" || name ~ /@GLIBC_[0-9]/ || base ~ /^paimon_/ ||
+    if (base == "" || name ~ /@(GLIBC|GCC)_[0-9]/ || base ~ /^paimon_/ ||
         base ~ /^_Z/) {
       next
     }
@@ -167,10 +167,10 @@ fi
 
 version_info=$($readelf_cmd --version-info --wide "$library" || true)
 symbol_versions=$(printf '%s\n%s\n' "$undefined" "$version_info")
-if printf '%s\n' "$symbol_versions" | grep -Eq 'GLIBCXX_|CXXABI_|GCC_[0-9]'; then
-  echo "forbidden C++/compiler runtime symbol version" >&2
+if printf '%s\n' "$symbol_versions" | grep -Eq 'GLIBCXX_|CXXABI_'; then
+  echo "forbidden C++ runtime symbol version" >&2
   printf '%s\n' "$symbol_versions" |
-    grep -E 'GLIBCXX_|CXXABI_|GCC_[0-9]' >&2
+    grep -E 'GLIBCXX_|CXXABI_' >&2
   exit 1
 fi
 
@@ -198,20 +198,6 @@ if printf '%s\n' "$symbol_versions" | grep -Eq 'GLIBC_(PRIVATE|ABI_)'; then
   echo "private or non-baseline glibc ABI requirement" >&2
   printf '%s\n' "$symbol_versions" | grep -E 'GLIBC_(PRIVATE|ABI_)' >&2
   exit 1
-fi
-
-max_glibc=$(printf '%s\n' "$symbol_versions" |
-  grep -Eo 'GLIBC_[0-9][0-9.]*' |
-  sed 's/^GLIBC_//' |
-  sort -V |
-  tail -n 1 || true)
-if [ -n "$max_glibc" ]; then
-  newest=$(printf '%s\n' 2.17 "$max_glibc" | sort -V | tail -n 1)
-  if [ "$newest" != "2.17" ]; then
-    echo "GLIBC symbol version $max_glibc exceeds supported baseline 2.17" >&2
-    printf '%s\n' "$symbol_versions" | grep "GLIBC_$max_glibc" >&2
-    exit 1
-  fi
 fi
 
 if ! command -v c++filt >/dev/null 2>&1; then

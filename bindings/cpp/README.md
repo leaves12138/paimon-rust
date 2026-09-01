@@ -98,18 +98,18 @@ target/cpp-build/
 `libpaimon_c.dylib` in the same location. The facade is header-only, so there is
 intentionally no separate `libpaimon_cpp` shared library.
 
-macOS and Windows use Cargo's release profile. Linux uses
-`bindings/c/scripts/build_linux_release.sh`, which requires Zig and
-`cargo-zigbuild`, targets glibc 2.17, and rejects non-C runtime dependencies.
-External prebuilt paimon-c libraries and parent-provided `Paimon::c` targets are
-deliberately unsupported.
+All platforms use `cargo build --locked --release -p paimon-c`. Build Linux
+release artifacts on the oldest glibc version that must be supported; glibc is
+backward compatible with binaries built against older symbol versions.
+External prebuilt paimon-c libraries and parent-provided `Paimon::c` targets
+are deliberately unsupported.
 
 When changing the C ABI, regenerate the checked header separately with
 `cbindgen`; ordinary builds consume the checked-in `bindings/c/include/paimon.h`.
 
-For a shared plugin that must load without `libstdc++`, `libc++`, or
-`libgcc_s`, compile the C++ source without exceptions/RTTI and use the C linker
-driver for the final link:
+For a shared plugin that must load without `libstdc++` or `libc++`, compile the
+C++ source without exceptions/RTTI and use the C linker driver for the final
+link:
 
 ```bash
 c++ -std=c++17 -fPIC -fno-exceptions -fno-rtti \
@@ -160,26 +160,24 @@ library bundled in the same installation prefix.
 
 ## Linux runtime guard
 
-Install Zig and `cargo-zigbuild`, then produce every Linux release artifact
-through the checked build script. It targets glibc 2.17 and immediately runs
-the ELF guard, preventing a newer build host from silently raising the runtime
-glibc requirement or introducing a shared compiler/C++ runtime:
+Run the ELF guard on the library staged by CMake when validating a Linux
+release artifact:
 
 ```bash
-bindings/c/scripts/build_linux_release.sh
+bindings/cpp/scripts/verify_linux_elf.sh \
+  target/cpp-build/lib/libpaimon_c.so
 ```
 
-The validated library is written to
-`target/<rust-target>/release/libpaimon_c.so`.
+Some distributions use `lib64` instead of `lib`. The build host determines the
+minimum glibc version; build on glibc 2.17 when 2.17 is the deployment baseline.
 
 It prints the build host's `ldd --version` and applies a `DT_NEEDED` allowlist
-containing glibc components and `libpaimon_c`. It rejects C++ runtimes,
-`libgcc_s`, `libunwind`, `libatomic`, `GLIBCXX`/`CXXABI`/`GCC` symbol versions,
+containing glibc components, `libgcc_s`, and `libpaimon_c`. It rejects C++
+runtimes, `libunwind`, `libatomic`, `GLIBCXX`/`CXXABI` symbol versions,
 undefined or exported C++ mangled symbols, unversioned host hooks, operator
-new/delete, RTTI/dynamic-cast support, absolute runtime paths, and
-private/non-baseline glibc ABI versions. Glibc's C-level `__cxa_atexit`,
-`__cxa_finalize`, and `__cxa_thread_atexit_impl` remain allowed. The highest
-referenced numeric `GLIBC_*` symbol version must not exceed 2.17.
+new/delete, RTTI/dynamic-cast support, absolute runtime paths, and private
+glibc ABI versions. Glibc's C-level `__cxa_atexit`, `__cxa_finalize`, and
+`__cxa_thread_atexit_impl` remain allowed.
 
 `Scan::plan()` remains a bounded scan. Use `StreamScanOptions` and
 `ReadBuilder::new_stream_scan` for a stateful continuous scan. Persist

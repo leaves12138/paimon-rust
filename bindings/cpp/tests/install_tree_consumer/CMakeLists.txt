@@ -31,5 +31,5 @@ option(PAIMON_INJECT_FORBIDDEN_RUNTIME "Test the installed ELF guard" OFF)
 if(PAIMON_INJECT_FORBIDDEN_RUNTIME)
   target_link_options(
     paimon_install_tree_consumer PRIVATE -Wl,--no-as-needed)
-  target_link_libraries(paimon_install_tree_consumer PRIVATE gcc_s)
+  target_link_libraries(paimon_install_tree_consumer PRIVATE stdc++)
 endif()

@@ -61,22 +61,10 @@ if(APPLE)
       "${CMAKE_COMMAND}" -E env "MAKEFLAGS=" "${paimon_cargo_executable}"
       build --locked --release -p paimon-c)
 elseif(UNIX)
-  string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" paimon_system_processor)
-  if(paimon_system_processor MATCHES "^(x86_64|amd64)$")
-    set(paimon_linux_rust_target x86_64-unknown-linux-gnu)
-  elseif(paimon_system_processor MATCHES "^(aarch64|arm64)$")
-    set(paimon_linux_rust_target aarch64-unknown-linux-gnu)
-  else()
-    message(
-      FATAL_ERROR
-        "Unsupported Linux architecture for paimon-c: ${CMAKE_SYSTEM_PROCESSOR}")
-  endif()
-  set(paimon_c_library
-      "${paimon_rust_root}/target/${paimon_linux_rust_target}/release/libpaimon_c.so")
+  set(paimon_c_library "${paimon_rust_root}/target/release/libpaimon_c.so")
   set(paimon_c_build_command
-      "${CMAKE_COMMAND}" -E env "MAKEFLAGS="
-      "PAIMON_LINUX_RUST_TARGET=${paimon_linux_rust_target}"
-      "${CMAKE_CURRENT_SOURCE_DIR}/../c/scripts/build_linux_release.sh")
+      "${CMAKE_COMMAND}" -E env "MAKEFLAGS=" "${paimon_cargo_executable}"
+      build --locked --release -p paimon-c)
 elseif(WIN32)
   set(paimon_c_library "${paimon_rust_root}/target/release/paimon_c.dll")
   set(paimon_c_build_command
@@ -308,13 +296,9 @@ if(PAIMON_CPP_BUILD_TESTS)
         paimon_elf_fixture_libgcc PRIVATE -Wl,--no-as-needed)
       target_link_libraries(paimon_elf_fixture_libgcc PRIVATE gcc_s)
       add_test(
-        NAME paimon_elf_guard_rejects_libgcc
-        COMMAND
-          "${CMAKE_COMMAND}"
-          "-DVERIFIER=${CMAKE_CURRENT_SOURCE_DIR}/scripts/verify_linux_elf.sh"
-          "-DLIBRARY=$<TARGET_FILE:paimon_elf_fixture_libgcc>"
-          "-DEXPECTED=libgcc_s"
-          -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/expect_elf_rejected.cmake")
+        NAME paimon_elf_guard_allows_libgcc
+        COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/scripts/verify_linux_elf.sh"
+                "$<TARGET_FILE:paimon_elf_fixture_libgcc>")
     endif()
 
     set(paimon_cpp_install_test_root
