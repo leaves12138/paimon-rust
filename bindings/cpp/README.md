@@ -83,6 +83,20 @@ cmake -S bindings/cpp -B target/cpp-build \
 cmake --build target/cpp-build
 ```
 
+The default build stages a complete SDK under `target/cpp-build/sdk`:
+
+```text
+sdk/
+├── include/paimon.h
+├── include/paimon/paimon.hpp
+├── <libdir>/libpaimon_c.so       # Linux
+└── <libdir>/cmake/PaimonCpp/
+```
+
+`<libdir>` follows GNUInstallDirs and is normally `lib` or `lib64`. macOS uses
+`libpaimon_c.dylib` in the same location. The facade is header-only, so there is
+intentionally no separate `libpaimon_cpp` shared library.
+
 macOS and Windows use Cargo's release profile. Linux uses
 `bindings/c/scripts/build_linux_release.sh`, which requires Zig and
 `cargo-zigbuild`, targets glibc 2.17, and rejects non-C runtime dependencies.

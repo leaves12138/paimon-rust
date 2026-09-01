@@ -347,13 +347,42 @@ if(PAIMON_CPP_BUILD_TESTS)
   endif()
 endif()
 
-install(DIRECTORY include/ DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
+set(paimon_cpp_install_component PaimonCppSdk)
+install(
+  DIRECTORY include/
+  DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
+  COMPONENT ${paimon_cpp_install_component})
 install(
   FILES "${paimon_c_include_dir}/paimon.h"
-  DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
+  DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
+  COMPONENT ${paimon_cpp_install_component})
 install(
   FILES "${paimon_c_library}"
-  DESTINATION "${CMAKE_INSTALL_LIBDIR}")
+  DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+  COMPONENT ${paimon_cpp_install_component})
+if(APPLE)
+  find_program(paimon_install_name_tool NAMES install_name_tool)
+  find_program(paimon_codesign NAMES codesign)
+  if(NOT paimon_install_name_tool OR NOT paimon_codesign)
+    message(FATAL_ERROR "install_name_tool and codesign are required on macOS")
+  endif()
+  install(
+    CODE
+      "set(paimon_installed_library \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}/${PAIMON_C_INSTALL_FILENAME}\")
+       execute_process(
+         COMMAND \"${paimon_install_name_tool}\" -id \"@rpath/${PAIMON_C_INSTALL_FILENAME}\" \"\${paimon_installed_library}\"
+         RESULT_VARIABLE paimon_install_name_result)
+       if(NOT paimon_install_name_result EQUAL 0)
+         message(FATAL_ERROR \"failed to set the paimon-c install name\")
+       endif()
+       execute_process(
+         COMMAND \"${paimon_codesign}\" --force --sign - \"\${paimon_installed_library}\"
+         RESULT_VARIABLE paimon_codesign_result)
+       if(NOT paimon_codesign_result EQUAL 0)
+         message(FATAL_ERROR \"failed to sign the installed paimon-c library\")
+       endif()"
+    COMPONENT ${paimon_cpp_install_component})
+endif()
 install(
   TARGETS paimon_cpp
   EXPORT PaimonCppTargets
@@ -362,7 +391,8 @@ install(
   EXPORT PaimonCppTargets
   FILE PaimonCppTargets.cmake
   NAMESPACE Paimon::
-  DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/PaimonCpp")
+  DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/PaimonCpp"
+  COMPONENT ${paimon_cpp_install_component})
 
 configure_package_config_file(
   cmake/PaimonCppConfig.cmake.in
@@ -377,7 +407,23 @@ install(
     "${CMAKE_CURRENT_BINARY_DIR}/PaimonCppConfig.cmake"
     "${CMAKE_CURRENT_BINARY_DIR}/PaimonCppConfigVersion.cmake"
     "${CMAKE_CURRENT_SOURCE_DIR}/cmake/PaimonNoRuntimePlugin.cmake"
-  DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/PaimonCpp")
+  DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/PaimonCpp"
+  COMPONENT ${paimon_cpp_install_component})
 install(
   PROGRAMS "${CMAKE_CURRENT_SOURCE_DIR}/scripts/verify_linux_elf.sh"
-  DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/PaimonCpp")
+  DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/PaimonCpp"
+  COMPONENT ${paimon_cpp_install_component})
+
+# Keep the normal CMake install target, and also materialize a ready-to-use SDK
+# beside the build files so `cmake --build` has an obvious deliverable.
+set(paimon_cpp_sdk_dir "${CMAKE_CURRENT_BINARY_DIR}/sdk")
+add_custom_target(
+  paimon_cpp_sdk ALL
+  COMMAND
+    "${CMAKE_COMMAND}" --install "${CMAKE_BINARY_DIR}"
+    --prefix "${paimon_cpp_sdk_dir}"
+    --component ${paimon_cpp_install_component}
+  DEPENDS paimon_c_cargo_build
+  COMMENT "Staging the Paimon C++ SDK in ${paimon_cpp_sdk_dir}"
+  VERBATIM
+  USES_TERMINAL)
