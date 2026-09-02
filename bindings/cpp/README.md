@@ -104,8 +104,10 @@ backward compatible with binaries built against older symbol versions.
 External prebuilt paimon-c libraries and parent-provided `Paimon::c` targets
 are deliberately unsupported.
 
-When changing the C ABI, regenerate the checked header separately with
-`cbindgen`; ordinary builds consume the checked-in `bindings/c/include/paimon.h`.
+Source builds require `cbindgen`. CMake regenerates `paimon.h` from the Rust C
+ABI in `target/cpp-build/generated/include`; the generated header is not stored
+in Git. The staged build tree and every installed package still contain it at
+`include/paimon.h`.
 
 Install the CMake interface target elsewhere when needed:
 

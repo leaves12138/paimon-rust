@@ -25,7 +25,12 @@ option(PAIMON_CPP_BUILD_EXAMPLES "Build the C++ facade examples" OFF)
 option(PAIMON_CPP_BUILD_TESTS "Build the header compile smoke test" OFF)
 get_filename_component(
   paimon_rust_root "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
-set(paimon_c_include_dir "${CMAKE_CURRENT_SOURCE_DIR}/../c/include")
+get_filename_component(
+  paimon_c_binding_dir "${CMAKE_CURRENT_SOURCE_DIR}/../c" ABSOLUTE)
+set(paimon_c_generated_include_dir
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/include")
+set(paimon_c_generated_header
+    "${paimon_c_generated_include_dir}/paimon.h")
 
 if(TARGET Paimon::c)
   message(
@@ -45,6 +50,17 @@ else()
 endif()
 if(NOT paimon_cargo_executable)
   message(FATAL_ERROR "Rust Cargo was not found")
+endif()
+if(DEFINED ENV{CBINDGEN} AND EXISTS "$ENV{CBINDGEN}")
+  set(paimon_cbindgen_executable "$ENV{CBINDGEN}")
+else()
+  set(paimon_find_appbundle "${CMAKE_FIND_APPBUNDLE}")
+  set(CMAKE_FIND_APPBUNDLE NEVER)
+  find_program(paimon_cbindgen_executable NAMES cbindgen)
+  set(CMAKE_FIND_APPBUNDLE "${paimon_find_appbundle}")
+endif()
+if(NOT paimon_cbindgen_executable)
+  message(FATAL_ERROR "cbindgen was not found")
 endif()
 execute_process(
   COMMAND "${paimon_cargo_executable}" -vV
@@ -88,6 +104,29 @@ add_custom_target(
   VERBATIM
   USES_TERMINAL)
 
+file(
+  GLOB_RECURSE paimon_c_header_sources CONFIGURE_DEPENDS
+  "${paimon_c_binding_dir}/src/*.rs")
+add_custom_command(
+  OUTPUT "${paimon_c_generated_header}"
+  COMMAND
+    "${CMAKE_COMMAND}" -E make_directory
+    "${paimon_c_generated_include_dir}"
+  COMMAND
+    "${paimon_cbindgen_executable}" --quiet
+    --config "${paimon_c_binding_dir}/cbindgen.toml"
+    "${paimon_c_binding_dir}"
+    --output "${paimon_c_generated_header}"
+  DEPENDS
+    ${paimon_c_header_sources}
+    "${paimon_c_binding_dir}/Cargo.toml"
+    "${paimon_c_binding_dir}/cbindgen.toml"
+  COMMENT "Generating paimon.h from the Rust C ABI"
+  VERBATIM)
+add_custom_target(
+  paimon_c_header ALL DEPENDS "${paimon_c_generated_header}")
+add_dependencies(paimon_c_header paimon_c_cargo_build)
+
 get_filename_component(
   PAIMON_C_INSTALL_FILENAME "${paimon_c_library}" NAME)
 
@@ -99,12 +138,12 @@ set_target_properties(
   PROPERTIES
     IMPORTED_LOCATION "${paimon_c_library}"
     IMPORTED_NO_SONAME TRUE
-    INTERFACE_INCLUDE_DIRECTORIES "${paimon_c_include_dir}")
-add_dependencies(Paimon::c paimon_c_cargo_build)
+    INTERFACE_INCLUDE_DIRECTORIES "${paimon_c_generated_include_dir}")
+add_dependencies(Paimon::c paimon_c_cargo_build paimon_c_header)
 
 add_library(paimon_cpp INTERFACE)
 add_library(Paimon::cpp ALIAS paimon_cpp)
-add_dependencies(paimon_cpp paimon_c_cargo_build)
+add_dependencies(paimon_cpp paimon_c_cargo_build paimon_c_header)
 set_target_properties(paimon_cpp PROPERTIES EXPORT_NAME cpp)
 target_compile_features(paimon_cpp INTERFACE cxx_std_17)
 target_include_directories(
@@ -114,7 +153,7 @@ target_include_directories(
     "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>")
 
 target_include_directories(
-  paimon_cpp INTERFACE "$<BUILD_INTERFACE:${paimon_c_include_dir}>")
+  paimon_cpp INTERFACE "$<BUILD_INTERFACE:${paimon_c_generated_include_dir}>")
 
 target_link_libraries(paimon_cpp INTERFACE Paimon::c)
 
@@ -160,7 +199,7 @@ install(
   DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
   COMPONENT ${paimon_cpp_install_component})
 install(
-  FILES "${paimon_c_include_dir}/paimon.h"
+  FILES "${paimon_c_generated_header}"
   DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
   COMPONENT ${paimon_cpp_install_component})
 install(
@@ -229,7 +268,7 @@ add_custom_target(
     "${CMAKE_COMMAND}" --install "${CMAKE_BINARY_DIR}"
     --prefix "${CMAKE_CURRENT_BINARY_DIR}"
     --component ${paimon_cpp_install_component}
-  DEPENDS paimon_c_cargo_build
+  DEPENDS paimon_c_cargo_build paimon_c_header
   COMMENT "Staging the Paimon C++ artifacts in ${CMAKE_CURRENT_BINARY_DIR}"
   VERBATIM
   USES_TERMINAL)

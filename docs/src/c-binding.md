@@ -24,15 +24,14 @@ catalog and table access, scan planning, predicate push-down, streaming reads,
 writes and commits, and vector search. Record batches cross the ABI through the
 [Arrow C Data Interface](https://arrow.apache.org/docs/format/CDataInterface.html).
 
-The C binding is currently built from source. Its generated, C++-compatible
-public header is checked in at `bindings/c/include/paimon.h`; releases do not
-yet publish pre-built native packages.
+The C binding is currently built from source. The repository does not check in
+its generated public header.
 
 ## Prerequisites
 
 - A Rust toolchain supported by this repository
 - A C11-compatible compiler
-- [`cbindgen`](https://github.com/mozilla/cbindgen) only when updating the C ABI
+- [`cbindgen`](https://github.com/mozilla/cbindgen) for generating the C header
 - An Arrow implementation if the application reads or writes record batches
 
 Install `cbindgen` when it is not already available:
@@ -48,7 +47,7 @@ Run the following commands from the repository root:
 ```bash
 cargo build --release -p paimon-c
 cbindgen --config bindings/c/cbindgen.toml bindings/c \
-  --output bindings/c/include/paimon.h
+  --output target/release/paimon.h
 ```
 
 The build produces a dynamic library and a static library under
@@ -60,11 +59,11 @@ The build produces a dynamic library and a static library under
 | macOS | `libpaimon_c.dylib` |
 | Windows | `paimon_c.dll` |
 
-Link the checked-in header and library into an application:
+Link the generated header and library into an application:
 
 ```bash
 cc -std=c11 example.c \
-  -Ibindings/c/include \
+  -Itarget/release \
   -Ltarget/release \
   -lpaimon_c \
   -o example
@@ -81,9 +80,9 @@ DYLD_LIBRARY_PATH=target/release ./example /path/to/warehouse
 ```
 
 The header-only C++17 facade under `bindings/cpp` adds move-only RAII handles
-without creating a C++ shared library. The only Paimon binary remains
-`libpaimon_c`, and release validation rejects dependencies on `libstdc++`,
-`libc++`, `GLIBCXX_*`, or `CXXABI_*` symbols.
+without creating a C++ shared library. Its CMake build compiles `libpaimon_c`
+and generates `paimon.h` automatically; install and CPack targets include the
+generated header.
 
 ## Opening and Scanning a Table
 

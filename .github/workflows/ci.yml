@@ -121,14 +121,6 @@ jobs:
       - name: Format
         run: cargo fmt --all -- --check
 
-      - name: Install cbindgen
-        uses: taiki-e/install-action@065d6a08a14e61e89fb0a4c10eecdbdef39c7d8e # v2.85.4
-        with:
-          tool: cbindgen@0.29.4
-
-      - name: Check C header
-        run: ./bindings/c/scripts/check-header.sh
-
       - name: Clippy
         run: cargo clippy --locked --all-targets --workspace --features fulltext,vortex -- -D warnings
 
@@ -177,6 +169,11 @@ jobs:
           - macos-latest
     steps:
       - uses: actions/checkout@v7
+
+      - name: Install cbindgen
+        uses: taiki-e/install-action@065d6a08a14e61e89fb0a4c10eecdbdef39c7d8e # v2.85.4
+        with:
+          tool: cbindgen@0.29.4
 
       - name: Configure C++ facade
         run: >
