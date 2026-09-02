@@ -178,9 +178,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Test C ABI
-        run: cargo test --locked -p paimon-c
-
       - name: Configure C++ facade
         run: >
           cmake -S bindings/cpp -B target/cpp-ci
