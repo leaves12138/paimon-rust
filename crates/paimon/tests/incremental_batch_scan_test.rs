@@ -17,7 +17,7 @@
 
 mod common;
 
-use arrow_array::{Array, BinaryArray, Int32Array, RecordBatch};
+use arrow_array::{Array, BinaryArray, Int32Array, RecordBatch, StringArray};
 use arrow_schema::{DataType as ArrowDataType, Field as ArrowField, Schema as ArrowSchema};
 use futures::TryStreamExt;
 use paimon::spec::{BlobType, DataType, IntType, Schema, TableSchema};
@@ -133,6 +133,34 @@ async fn delta_data_evolution_reads_blob_column_files() {
     assert_eq!(batches.iter().map(RecordBatch::num_rows).sum::<usize>(), 1);
     let payloads = batches[0]
         .column(1)
+        .as_any()
+        .downcast_ref::<BinaryArray>()
+        .unwrap();
+    assert_eq!(payloads.value(0), b"blob-data");
+
+    let audit_batches: Vec<RecordBatch> = builder
+        .new_read()
+        .unwrap()
+        .to_audit_log_arrow(&plan)
+        .unwrap()
+        .try_collect()
+        .await
+        .unwrap();
+    assert_eq!(
+        audit_batches
+            .iter()
+            .map(RecordBatch::num_rows)
+            .sum::<usize>(),
+        1
+    );
+    let rowkinds = audit_batches[0]
+        .column(0)
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .unwrap();
+    assert_eq!(rowkinds.value(0), "+I");
+    let payloads = audit_batches[0]
+        .column(2)
         .as_any()
         .downcast_ref::<BinaryArray>()
         .unwrap();
