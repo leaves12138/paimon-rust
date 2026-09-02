@@ -327,14 +327,6 @@ class [[nodiscard]] Result<void> final {
 using Status = Result<void>;
 using Option = ::paimon_option;
 
-[[nodiscard]] inline std::uint32_t abi_version() noexcept {
-  return ::paimon_abi_version();
-}
-
-[[nodiscard]] inline Bytes library_version() noexcept {
-  return Bytes(adopt_handle, ::paimon_library_version());
-}
-
 namespace detail {
 
 inline Status status_from(::paimon_error* error) noexcept {

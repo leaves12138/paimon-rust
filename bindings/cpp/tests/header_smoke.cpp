@@ -30,10 +30,6 @@ static_assert(std::is_nothrow_destructible<paimon::TableCommit>::value,
 void paimon_cpp_header_smoke(const paimon::Option* options,
                              std::size_t option_count,
                              void* arrow_array, void* arrow_schema) {
-  const auto abi = paimon::abi_version();
-  auto version = paimon::library_version();
-  (void)abi;
-  (void)version;
   auto catalog = paimon::Catalog::create(options, option_count);
   auto identifier = paimon::Identifier::create("default", "table");
   auto direct_table = paimon::Table::from_schema_json(

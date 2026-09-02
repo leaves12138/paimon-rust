@@ -31,7 +31,6 @@ mod table;
 mod tests;
 mod types;
 mod vector_search;
-mod version;
 mod write;
 
 use std::sync::OnceLock;

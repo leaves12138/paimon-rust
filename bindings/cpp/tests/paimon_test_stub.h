@@ -184,8 +184,6 @@ typedef struct paimon_result_stream_poll {
 
 void paimon_error_free(paimon_error* error);
 void paimon_bytes_free(paimon_bytes bytes);
-uint32_t paimon_abi_version(void);
-paimon_bytes paimon_library_version(void);
 paimon_result_catalog_new paimon_catalog_create(const paimon_option* options,
                                                 size_t options_len);
 void paimon_catalog_free(paimon_catalog* catalog);

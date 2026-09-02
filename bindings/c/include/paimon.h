@@ -472,14 +472,6 @@ extern "C" {
 #endif // __cplusplus
 
 /**
- * ABI version for the native C boundary.
- *
- * Version 1 is additive: callers must still feature-detect newer symbols when
- * loading the shared library dynamically.
- */
-uint32_t paimon_abi_version(void);
-
-/**
  * Free the ArrowArray and ArrowSchema container structs for a single batch.
  *
  * # Safety
@@ -685,14 +677,6 @@ void paimon_identifier_free(struct paimon_identifier *id);
  * `database` and `object` must be valid null-terminated C strings, or null (returns error).
  */
 struct paimon_result_identifier_new paimon_identifier_new(const char *database, const char *object);
-
-/**
- * Return the paimon-rust package version as an owned UTF-8 byte buffer.
- *
- * The returned bytes are not NUL terminated and must be released with
- * `paimon_bytes_free`.
- */
-struct paimon_bytes paimon_library_version(void);
 
 /**
  * Free a paimon_plan.
