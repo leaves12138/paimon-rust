@@ -319,8 +319,15 @@ impl<'a> PaimonTableRead<'a> {
             }
         }
         // Delta / Changelog rows are read as-is from planned files (no full-table
-        // merge against historical base versions).
-        self.new_data_file_reader()?.read(&data_splits)
+        // merge against historical base versions). Data-evolution tables still
+        // need their column files merged with the main data file; reading only
+        // the latter would silently return NULL for BLOB/vector columns.
+        let core_options = self.table.schema.core_options();
+        if core_options.data_evolution_enabled() {
+            self.read_with_evolution(&data_splits, &core_options)
+        } else {
+            self.new_data_file_reader()?.read(&data_splits)
+        }
     }
 
     fn to_incremental_diff_arrow(
