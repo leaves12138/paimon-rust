@@ -16,7 +16,7 @@
 # under the License.
 
 foreach(required IN ITEMS MAIN_BUILD_DIR CONSUMER_SOURCE_DIR TEST_ROOT
-                          CXX_COMPILER)
+                          CXX_COMPILER INSTALL_LIBDIR)
   if(NOT DEFINED ${required})
     message(FATAL_ERROR "missing -D${required}=...")
   endif()
@@ -37,11 +37,21 @@ if(NOT install_result EQUAL 0)
           "install-tree setup failed:\n${install_stdout}\n${install_stderr}")
 endif()
 
+set(config_libdir_alias "${TEST_ROOT}/libdir-alias")
+execute_process(
+  COMMAND "${CMAKE_COMMAND}" -E create_symlink
+          "${test_prefix}/${INSTALL_LIBDIR}" "${config_libdir_alias}"
+  RESULT_VARIABLE alias_result
+  ERROR_VARIABLE alias_stderr)
+if(NOT alias_result EQUAL 0)
+  message(FATAL_ERROR "package config alias setup failed:\n${alias_stderr}")
+endif()
+
 execute_process(
   COMMAND "${CMAKE_COMMAND}"
           -S "${CONSUMER_SOURCE_DIR}"
           -B "${consumer_build}"
-          "-DCMAKE_PREFIX_PATH=${test_prefix}"
+          "-DPaimonCpp_DIR=${config_libdir_alias}/cmake/PaimonCpp"
           "-DCMAKE_CXX_COMPILER=${CXX_COMPILER}"
   RESULT_VARIABLE configure_result
   OUTPUT_VARIABLE configure_stdout

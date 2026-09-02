@@ -17,6 +17,15 @@
 
 @PACKAGE_INIT@
 
+# CMake may discover /usr/lib64 packages through the /lib64 -> /usr/lib64
+# symlink. Resolve the config directory before deriving the install prefix so
+# imported include and library paths still point at /usr.
+get_filename_component(
+  _paimon_cpp_config_dir "${CMAKE_CURRENT_LIST_DIR}" REALPATH)
+get_filename_component(
+  PACKAGE_PREFIX_DIR "${_paimon_cpp_config_dir}/../../.." ABSOLUTE)
+unset(_paimon_cpp_config_dir)
+
 if(TARGET Paimon::cpp)
   if(NOT TARGET Paimon::c)
     set(PaimonCpp_FOUND FALSE)
@@ -53,4 +62,9 @@ set_target_properties(
     INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_INCLUDEDIR@")
 
 include("${CMAKE_CURRENT_LIST_DIR}/PaimonCppTargets.cmake")
+set_target_properties(
+  Paimon::cpp
+  PROPERTIES
+    INTERFACE_INCLUDE_DIRECTORIES
+      "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_INCLUDEDIR@")
 check_required_components(PaimonCpp)

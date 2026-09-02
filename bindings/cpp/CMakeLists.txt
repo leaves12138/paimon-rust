@@ -190,6 +190,7 @@ if(PAIMON_CPP_BUILD_TESTS)
       "-DCONSUMER_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/tests/install_tree_consumer"
       "-DTEST_ROOT=${paimon_cpp_install_test_root}"
       "-DCXX_COMPILER=${CMAKE_CXX_COMPILER}"
+      "-DINSTALL_LIBDIR=${CMAKE_INSTALL_LIBDIR}"
       -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/run_install_tree_consumer.cmake")
 endif()
 
