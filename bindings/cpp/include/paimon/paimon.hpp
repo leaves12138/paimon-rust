@@ -32,9 +32,9 @@
 #define PAIMON_C_HEADER <paimon.h>
 #endif
 
-// The repository's plain `cbindgen --lang c` output does not add a C++
-// compatibility guard. Force C linkage here; nesting is harmless when a
-// packaged paimon.h already supplies its own extern "C" block.
+// Keep overridden test/embedding headers under C linkage too. Nesting is
+// harmless for the generated paimon.h, which has its own C++ compatibility
+// guard.
 extern "C" {
 #include PAIMON_C_HEADER
 }
@@ -122,8 +122,8 @@ class Error final {
   ::paimon_error* error_ = nullptr;
 };
 
-// Owns a byte buffer allocated by libpaimon_c. This is used by the version and
-// durable prepared-commit APIs and never allocates through a C++ runtime.
+// Owns a byte buffer allocated by libpaimon_c. This is used by durable stream
+// plan and prepared-commit APIs and never allocates through a C++ runtime.
 class Bytes final {
  public:
   constexpr Bytes() noexcept : bytes_{nullptr, 0} {}

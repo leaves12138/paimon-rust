@@ -104,6 +104,12 @@ backward compatible with binaries built against older symbol versions.
 External prebuilt paimon-c libraries and parent-provided `Paimon::c` targets
 are deliberately unsupported.
 
+Linux builds use the OpenSSL selected by the locked `openssl-sys` dependency
+and link it dynamically. OpenSSL 1.0.2 is not supported by the current lock;
+an old-glibc build host must provide a parallel OpenSSL 1.1 or newer development
+installation. The resulting package requires that exact OpenSSL SONAME at
+runtime.
+
 Source builds require `cbindgen`. CMake regenerates `paimon.h` from the Rust C
 ABI in `target/cpp-build/generated/include`; the generated header is not stored
 in Git. The staged build tree and every installed package still contain it at
@@ -147,8 +153,10 @@ sudo dnf install ./paimon-cpp-devel-*.rpm
 
 All formats from one run contain the same `libpaimon_c.so`. Package format does
 not change its glibc or OpenSSL ABI: build on each binary compatibility baseline
-that customers need. The TGZ is the format-neutral fallback and contains the
-same `/usr` installation tree.
+that customers need. Publish a DEB from a Debian/Ubuntu baseline and an RPM from
+an RPM-family baseline so native library-directory and dependency conventions
+match the target distribution. The TGZ is the format-neutral fallback and
+contains the same `/usr` installation tree.
 
 `Scan::plan()` remains a bounded scan. Use `StreamScanOptions` and
 `ReadBuilder::new_stream_scan` for a stateful continuous scan. Persist

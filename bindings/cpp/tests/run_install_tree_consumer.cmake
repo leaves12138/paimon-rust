@@ -60,3 +60,13 @@ if(NOT build_result EQUAL 0)
   message(FATAL_ERROR
           "install-tree consumer build failed:\n${build_stdout}\n${build_stderr}")
 endif()
+
+execute_process(
+  COMMAND "${consumer_build}/paimon_install_tree_consumer${CMAKE_EXECUTABLE_SUFFIX}"
+  RESULT_VARIABLE run_result
+  OUTPUT_VARIABLE run_stdout
+  ERROR_VARIABLE run_stderr)
+if(NOT run_result EQUAL 0)
+  message(FATAL_ERROR
+          "install-tree consumer run failed:\n${run_stdout}\n${run_stderr}")
+endif()

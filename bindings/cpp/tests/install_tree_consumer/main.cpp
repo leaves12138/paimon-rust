@@ -18,5 +18,6 @@
 #include <paimon/paimon.hpp>
 
 int main() {
-  return 0;
+  auto options = paimon::StreamScanOptions::defaults();
+  return options ? 0 : 1;
 }
