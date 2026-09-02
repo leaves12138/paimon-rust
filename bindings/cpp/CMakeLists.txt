@@ -164,7 +164,7 @@ install(
   DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
   COMPONENT ${paimon_cpp_install_component})
 install(
-  FILES "${paimon_c_library}"
+  PROGRAMS "${paimon_c_library}"
   DESTINATION "${CMAKE_INSTALL_LIBDIR}"
   COMPONENT ${paimon_cpp_install_component})
 if(APPLE)
@@ -215,12 +215,17 @@ install(
     "${CMAKE_CURRENT_BINARY_DIR}/PaimonCppConfigVersion.cmake"
   DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/PaimonCpp"
   COMPONENT ${paimon_cpp_install_component})
+install(
+  FILES "${paimon_rust_root}/LICENSE" "${paimon_rust_root}/NOTICE"
+  DESTINATION "${CMAKE_INSTALL_DATADIR}/doc/paimon-cpp"
+  COMPONENT ${paimon_cpp_install_component})
 
 # Keep the normal CMake install target, and also materialize the ready-to-use
 # headers, library, and package files directly in the CMake build directory.
 add_custom_target(
   paimon_cpp_artifacts ALL
   COMMAND
+    "${CMAKE_COMMAND}" -E env "DESTDIR="
     "${CMAKE_COMMAND}" --install "${CMAKE_BINARY_DIR}"
     --prefix "${CMAKE_CURRENT_BINARY_DIR}"
     --component ${paimon_cpp_install_component}
@@ -228,3 +233,59 @@ add_custom_target(
   COMMENT "Staging the Paimon C++ artifacts in ${CMAKE_CURRENT_BINARY_DIR}"
   VERBATIM
   USES_TERMINAL)
+
+# A Linux package build emits the native package formats plus a portable
+# archive in one CPack invocation. All three contain the same binary, so build
+# on the oldest Linux/OpenSSL ABI baseline that the resulting packages support.
+set(CPACK_PACKAGE_NAME "paimon-cpp-sdk")
+set(CPACK_PACKAGE_VENDOR "Apache Software Foundation")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY
+    "Apache Paimon C and header-only C++ SDK")
+set(CPACK_PACKAGE_HOMEPAGE_URL "https://paimon.apache.org/")
+set(CPACK_PACKAGE_CONTACT "dev@paimon.apache.org")
+set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+set(CPACK_RESOURCE_FILE_LICENSE "${paimon_rust_root}/LICENSE")
+set(CPACK_PACKAGE_DIRECTORY "${CMAKE_BINARY_DIR}/packages")
+set(CPACK_PACKAGE_CHECKSUM SHA256)
+set(CPACK_MONOLITHIC_INSTALL ON)
+set(CPACK_PACKAGE_RELOCATABLE FALSE)
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  set(CPACK_GENERATOR "DEB;RPM;TGZ")
+  set(CPACK_PACKAGING_INSTALL_PREFIX "/usr")
+
+  set(CPACK_DEBIAN_PACKAGE_NAME "paimon-cpp-dev")
+  set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Apache Paimon Developers")
+  set(CPACK_DEBIAN_PACKAGE_SECTION "libdevel")
+  set(CPACK_DEBIAN_PACKAGE_RELEASE "1")
+  set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
+  if(paimon_rust_host MATCHES "^x86_64-")
+    set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE amd64)
+  elseif(paimon_rust_host MATCHES "^aarch64-")
+    set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE arm64)
+  else()
+    message(
+      FATAL_ERROR
+        "No Debian architecture mapping for Rust host ${paimon_rust_host}")
+  endif()
+
+  set(CPACK_RPM_PACKAGE_NAME "paimon-cpp-devel")
+  set(CPACK_RPM_PACKAGE_LICENSE "Apache-2.0")
+  set(CPACK_RPM_PACKAGE_GROUP "Development/Libraries")
+  set(CPACK_RPM_PACKAGE_RELEASE "1")
+  set(CPACK_RPM_PACKAGE_RELEASE_DIST ON)
+  set(CPACK_RPM_PACKAGE_AUTOREQ ON)
+  set(CPACK_RPM_PACKAGE_RELOCATABLE FALSE)
+  set(CPACK_RPM_FILE_NAME RPM-DEFAULT)
+
+  configure_file(
+    cmake/PaimonCppCPackOptions.cmake.in
+    "${CMAKE_CURRENT_BINARY_DIR}/PaimonCppCPackOptions.cmake"
+    @ONLY)
+  set(CPACK_PROJECT_CONFIG_FILE
+      "${CMAKE_CURRENT_BINARY_DIR}/PaimonCppCPackOptions.cmake")
+else()
+  set(CPACK_GENERATOR TGZ)
+endif()
+
+include(CPack)

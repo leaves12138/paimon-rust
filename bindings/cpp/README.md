@@ -122,6 +122,32 @@ add_executable(my_paimon_app main.cpp)
 target_link_libraries(my_paimon_app PRIVATE Paimon::cpp)
 ```
 
+## Linux packages
+
+The CPack `package` target builds all supported Linux package formats in one
+run after compiling the in-tree Rust library:
+
+```bash
+cmake -S bindings/cpp -B target/cpp-build
+cmake --build target/cpp-build --target package
+ls target/cpp-build/packages
+```
+
+It produces a Debian/Ubuntu `paimon-cpp-dev` DEB, an RPM-family
+`paimon-cpp-devel` RPM, and a `paimon-cpp-sdk` TGZ, plus a SHA-256 checksum for
+each package. Building the RPM requires the distribution's `rpmbuild` tool.
+Install the native package with, for example:
+
+```bash
+sudo apt install ./paimon-cpp-dev_*.deb
+sudo dnf install ./paimon-cpp-devel-*.rpm
+```
+
+All formats from one run contain the same `libpaimon_c.so`. Package format does
+not change its glibc or OpenSSL ABI: build on each binary compatibility baseline
+that customers need. The TGZ is the format-neutral fallback and contains the
+same `/usr` installation tree.
+
 `Scan::plan()` remains a bounded scan. Use `StreamScanOptions` and
 `ReadBuilder::new_stream_scan` for a stateful continuous scan. Persist
 `StreamScan::checkpoint()` only after every split in the returned plan has been
