@@ -42,10 +42,6 @@ normal integrity/access controls. Before `abort_prepared`, fence every commit
 and abort for the same `(table, commit_user)` across processes. If snapshot
 history is too old to prove safety, abort fails closed and leaves cleanup to an
 orphan-file policy.
-Filesystem-catalog commits require a backend with atomic publish-if-absent
-(conditional rename/copy/write). Unsupported backends fail closed; use REST
-commit or an external lock instead of relying on a racy existence check.
-
 Continuous reading is a pull API. `StreamScan::poll` immediately returns data,
 waiting, or end; it never starts a callback thread and never waits for a future
 snapshot. A data result owns a `StreamPlan`, which can be read in data or audit

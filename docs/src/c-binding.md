@@ -436,11 +436,6 @@ Serialized plan/commit blobs are trusted checkpoint state and are not
 cryptographically authenticated, so persist them with appropriate integrity
 and access controls.
 
-Filesystem-catalog snapshot publication requires an atomic
-publish-if-not-exists capability. If the storage backend cannot provide a
-conditional rename, copy, or write, commit returns `Unsupported`; use REST
-commit or an external lock rather than a racy check-then-write fallback.
-
 ## Error Handling and Resource Ownership
 
 Functions that can fail use one of two conventions:
